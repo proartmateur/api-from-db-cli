@@ -369,7 +369,7 @@ impl TuiApp {
     }
 
     fn handle_sql_preview(&mut self, code: KeyCode) {
-        let total = 3;
+        let total = 4;
         match code {
             KeyCode::Esc => {
                 self.state.screen = Screen::SoftDeleteStrategy;
@@ -387,8 +387,15 @@ impl TuiApp {
                             .to_string();
                 }
                 1 => {
+                    self.state.screen = Screen::CommandPreview;
+                    self.state.selected_action = 0;
                     self.state.last_message =
-                        "SQL mock marcado como copiado. El flujo continua sin tocar la BD."
+                        "SQL mock marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
+                            .to_string();
+                }
+                2 => {
+                    self.state.last_message =
+                        "SQL mock marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
                             .to_string();
                 }
                 _ => {
@@ -402,7 +409,7 @@ impl TuiApp {
     }
 
     fn handle_command_preview(&mut self, code: KeyCode) {
-        let total = 3;
+        let total = 4;
         match code {
             KeyCode::Esc => {
                 self.state.screen = if self
@@ -430,6 +437,13 @@ impl TuiApp {
                         "Ejecucion mock completada. Ya puedes revisar stdout y stderr.".to_string();
                 }
                 1 => {
+                    self.state.process_result =
+                        Some(mock_external_process_result(self.state.preview.as_ref()));
+                    self.state.screen = Screen::ProcessResult;
+                    self.state.last_message =
+                        "Comando mock marcado como copiado para ejecucion externa.".to_string();
+                }
+                2 => {
                     self.state.last_message =
                         "Comando mock marcado como copiado al portapapeles virtual.".to_string();
                 }
@@ -469,7 +483,7 @@ impl TuiApp {
             Line::from(Span::styled(
                 "api-from-db-cli",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from("TUI mock del flujo principal de generacion"),
@@ -694,8 +708,9 @@ impl TuiApp {
         frame.render_widget(sql_widget, chunks[0]);
 
         let actions = vec![
-            ListItem::new("Ejecutar ALTER TABLE mock"),
-            ListItem::new("Copiar SQL mock"),
+            ListItem::new("Ejecutar ALTER TABLE mock y continuar"),
+            ListItem::new("Copiar SQL y continuar al comando"),
+            ListItem::new("Copiar SQL y quedarse aqui"),
             ListItem::new("Cancelar"),
         ];
         render_selectable_list(
@@ -736,7 +751,8 @@ impl TuiApp {
 
         let actions = vec![
             ListItem::new("Ejecutar comando mock"),
-            ListItem::new("Copiar comando mock"),
+            ListItem::new("Copiar comando y marcar ejecucion externa"),
+            ListItem::new("Copiar comando y quedarse aqui"),
             ListItem::new("Cancelar"),
         ];
         render_selectable_list(
@@ -854,7 +870,7 @@ fn render_selectable_list(
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("› ");
@@ -938,6 +954,20 @@ fn mock_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult
         exit_code: 0,
         stdout: format!(
             "Ejecutando: {command}\nAPI generada correctamente.\nModels, services y routers creados."
+        ),
+        stderr: String::new(),
+    }
+}
+
+fn mock_external_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult {
+    let command = preview
+        .map(|item| item.generated_command.raw_command.clone())
+        .unwrap_or_else(|| "gen.exe demo id:int".to_string());
+
+    MockProcessResult {
+        exit_code: 0,
+        stdout: format!(
+            "Comando copiado para ejecucion externa:\n{command}\nPuedes correrlo en otra herramienta y volver despues."
         ),
         stderr: String::new(),
     }

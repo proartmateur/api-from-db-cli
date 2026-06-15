@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 crossterm = "0.28"
 ratatui = "0.29"
+tiberius = { version = "0.12", default-features = false, features = ["tokio", "rustls"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
