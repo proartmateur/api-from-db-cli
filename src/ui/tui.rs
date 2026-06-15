@@ -13,6 +13,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
+use crate::adapters::config::ConfigLoader;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
 use crate::domain::{
     ColumnSchema, DatabaseEngine, DatabaseObject, DatabaseObjectType, SoftDeletePreference,
@@ -97,6 +98,7 @@ struct AppState {
     selected_db_object: Option<DatabaseObject>,
     preview: Option<GenerationPreview>,
     process_result: Option<MockProcessResult>,
+    config_file_path: Option<String>,
     last_message: String,
 }
 
@@ -105,6 +107,53 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
+    fn handle_config_file_selection(&mut self) {
+        let loader = ConfigLoader;
+        self.state.connection_source = Some(ConnectionSource::ConfigFile);
+
+        match loader.ensure_default_file(None) {
+            Ok(result) if result.created => {
+                let path = result.path.display().to_string();
+                self.state.config_file_path = Some(path.clone());
+                self.state.last_message = format!(
+                    "Se genero `{}`. Editalo manualmente y presiona Enter otra vez para cargarlo.",
+                    path
+                );
+            }
+            Ok(result) => {
+                let path = result.path.display().to_string();
+                self.state.config_file_path = Some(path.clone());
+
+                match loader.load_from_json_file(result.path.as_path()) {
+                    Ok(config) => {
+                        self.state.engine = Some(config.engine);
+                        self.state.catalog = mock_catalog(config.engine);
+                        self.state.selected_object = 0;
+                        self.state.preview = None;
+                        self.state.process_result = None;
+                        self.state.screen = Screen::ObjectExplorer;
+                        self.state.last_message = format!(
+                            "Configuracion cargada desde `{}`. Se activo el flujo mock para {}.",
+                            path, config.engine
+                        );
+                    }
+                    Err(error) => {
+                        self.state.last_message = format!(
+                            "No se pudo cargar `{}`: {}. Edita el archivo y presiona Enter otra vez.",
+                            path, error
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                self.state.last_message = format!(
+                    "No fue posible preparar el archivo de configuracion: {}",
+                    error
+                );
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             state: AppState {
@@ -121,6 +170,7 @@ impl TuiApp {
                 selected_db_object: None,
                 preview: None,
                 process_result: None,
+                config_file_path: None,
                 last_message: "Selecciona como quieres cargar la conexion mock.".to_string(),
             },
         }
@@ -180,15 +230,16 @@ impl TuiApp {
         match code {
             KeyCode::Up => select_previous(&mut self.state.selected_connection_source, total),
             KeyCode::Down => select_next(&mut self.state.selected_connection_source, total),
-            KeyCode::Enter => {
-                self.state.connection_source = Some(match self.state.selected_connection_source {
-                    0 => ConnectionSource::Manual,
-                    _ => ConnectionSource::ConfigFile,
-                });
-                self.state.screen = Screen::EngineSelect;
-                self.state.last_message =
-                    "Conexion mock preparada. Ahora elige el motor de base de datos.".to_string();
-            }
+            KeyCode::Enter => match self.state.selected_connection_source {
+                0 => {
+                    self.state.connection_source = Some(ConnectionSource::Manual);
+                    self.state.screen = Screen::EngineSelect;
+                    self.state.last_message =
+                        "Conexion mock preparada. Ahora elige el motor de base de datos."
+                            .to_string();
+                }
+                _ => self.handle_config_file_selection(),
+            },
             _ => {}
         }
     }
@@ -515,13 +566,22 @@ impl TuiApp {
             .iter()
             .map(|source| ListItem::new(source.label()))
             .collect::<Vec<_>>();
+
+        let helper_message = match self.state.config_file_path.as_deref() {
+            Some(path) => format!(
+                "{}\n\nRuta actual del archivo: {}",
+                self.state.last_message, path
+            ),
+            None => self.state.last_message.clone(),
+        };
+
         draw_menu(
             frame,
             area,
             "Origen de Conexion",
             &items,
             self.state.selected_connection_source,
-            Some(self.state.last_message.as_str()),
+            Some(helper_message.as_str()),
         );
     }
 
