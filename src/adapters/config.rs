@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::core::error::AppError;
-use crate::domain::{ConnectionConfig, DatabaseEngine};
+use crate::domain::{ConnectionConfig, DatabaseEngine, GeneratorConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnsureConfigFileResult {
@@ -77,7 +77,7 @@ impl ConfigLoader {
             ))
         })?;
 
-        let file: ConfigTemplate = serde_json::from_str(&raw).map_err(|error| {
+        let mut file: ConfigTemplate = serde_json::from_str(&raw).map_err(|error| {
             AppError::InvalidConfiguration(format!(
                 "el archivo de configuracion no es JSON valido: {error}"
             ))
@@ -89,7 +89,7 @@ impl ConfigLoader {
             other => return Err(AppError::UnsupportedDatabaseEngine(other.to_string())),
         };
 
-        validate_template(&file)?;
+        validate_template(&mut file)?;
 
         Ok(ConnectionConfig {
             id: file.id.unwrap_or_else(|| "from-file".to_string()),
@@ -107,6 +107,10 @@ impl ConfigLoader {
             password: file.password,
             connection_string: file.connection_string,
             config_file_path: Some(path.display().to_string()),
+            generator: GeneratorConfig {
+                cmd: file.r#gen.cmd,
+                flags: file.r#gen.flags,
+            },
         })
     }
 }
@@ -123,6 +127,27 @@ struct ConfigTemplate {
     password: Option<String>,
     #[serde(alias = "connectionString")]
     connection_string: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "gen")]
+    r#gen: GeneratorConfigTemplate,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct GeneratorConfigTemplate {
+    cmd: String,
+    #[serde(default)]
+    flags: Vec<String>,
+    flag: Option<String>,
+}
+
+impl Default for GeneratorConfigTemplate {
+    fn default() -> Self {
+        Self {
+            cmd: "gen.exe".to_string(),
+            flags: vec!["--mvc".to_string()],
+            flag: None,
+        }
+    }
 }
 
 impl Default for ConfigTemplate {
@@ -137,11 +162,15 @@ impl Default for ConfigTemplate {
             username: Some("sa".to_string()),
             password: Some("cambia_este_valor".to_string()),
             connection_string: None,
+            r#gen: GeneratorConfigTemplate::default(),
         }
     }
 }
 
-fn validate_template(file: &ConfigTemplate) -> Result<(), AppError> {
+fn validate_template(file: &mut ConfigTemplate) -> Result<(), AppError> {
+    normalize_generator_flags(&mut file.r#gen);
+    require_string(Some(file.r#gen.cmd.as_str()), "gen.cmd")?;
+
     if file
         .connection_string
         .as_deref()
@@ -157,6 +186,21 @@ fn validate_template(file: &ConfigTemplate) -> Result<(), AppError> {
     require_string(file.password.as_deref(), "password")?;
 
     Ok(())
+}
+
+fn normalize_generator_flags(generator: &mut GeneratorConfigTemplate) {
+    if let Some(flag) = generator.flag.take() {
+        if !flag.trim().is_empty() {
+            generator.flags.push(flag);
+        }
+    }
+
+    generator.flags = generator
+        .flags
+        .drain(..)
+        .map(|flag| flag.trim().to_string())
+        .filter(|flag| !flag.is_empty())
+        .collect();
 }
 
 fn require_string(value: Option<&str>, field: &str) -> Result<(), AppError> {
@@ -194,6 +238,7 @@ mod tests {
 
         let content = fs::read_to_string(path.as_path()).unwrap();
         assert!(content.contains("sqlserver"));
+        assert!(content.contains("\"gen\""));
 
         let _ = fs::remove_file(path);
     }
@@ -207,6 +252,8 @@ mod tests {
         let config = loader.load_from_json_file(path.as_path()).unwrap();
         assert_eq!(config.engine, DatabaseEngine::SqlServer);
         assert_eq!(config.host.as_deref(), Some("localhost"));
+        assert_eq!(config.generator.cmd, "gen.exe");
+        assert_eq!(config.generator.flags, vec!["--mvc".to_string()]);
 
         let _ = fs::remove_file(path);
     }

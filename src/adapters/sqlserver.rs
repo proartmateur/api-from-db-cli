@@ -244,18 +244,15 @@ fn map_column_row(row: tiberius::Row) -> Result<ColumnSchema, AppError> {
     let name = required_string(&row, "COLUMN_NAME")?;
     let base_type = required_string(&row, "DATA_TYPE")?;
     let nullable = required_string(&row, "IS_NULLABLE")?.eq_ignore_ascii_case("YES");
-    let ordinal_position = row
-        .get::<i32, _>("ORDINAL_POSITION")
-        .ok_or_else(|| AppError::Database("ORDINAL_POSITION no estuvo presente".to_string()))?
-        as usize;
-    let is_primary_key = row.get::<i32, _>("IS_PRIMARY_KEY").unwrap_or(0) == 1;
+    let ordinal_position = required_i32(&row, "ORDINAL_POSITION")? as usize;
+    let is_primary_key = optional_i32(&row, "IS_PRIMARY_KEY").unwrap_or(0) == 1;
 
     let rendered_db_type = render_sql_server_db_type(
         &base_type,
-        row.get::<i32, _>("CHARACTER_MAXIMUM_LENGTH"),
-        row.get::<i32, _>("NUMERIC_PRECISION"),
-        row.get::<i32, _>("NUMERIC_SCALE"),
-        row.get::<i32, _>("DATETIME_PRECISION"),
+        optional_i32(&row, "CHARACTER_MAXIMUM_LENGTH"),
+        optional_i32(&row, "NUMERIC_PRECISION"),
+        optional_i32(&row, "NUMERIC_SCALE"),
+        optional_i32(&row, "DATETIME_PRECISION"),
     );
 
     Ok(ColumnSchema {
@@ -277,6 +274,22 @@ fn required_string(row: &tiberius::Row, column: &str) -> Result<String, AppError
                 "la columna requerida `{column}` no estuvo presente en el resultado"
             ))
         })
+}
+
+fn required_i32(row: &tiberius::Row, column: &str) -> Result<i32, AppError> {
+    optional_i32(row, column).ok_or_else(|| {
+        AppError::Database(format!(
+            "la columna numerica requerida `{column}` no estuvo presente o no pudo convertirse"
+        ))
+    })
+}
+
+fn optional_i32(row: &tiberius::Row, column: &str) -> Option<i32> {
+    row.try_get::<i32, _>(column)
+        .ok()
+        .flatten()
+        .or_else(|| row.try_get::<i16, _>(column).ok().flatten().map(i32::from))
+        .or_else(|| row.try_get::<u8, _>(column).ok().flatten().map(i32::from))
 }
 
 fn render_sql_server_db_type(
@@ -359,7 +372,7 @@ ORDER BY c.ORDINAL_POSITION;
 mod tests {
     use super::{render_sql_server_db_type, validate_sql_server_config};
     use crate::core::error::AppError;
-    use crate::domain::{ConnectionConfig, DatabaseEngine};
+    use crate::domain::{ConnectionConfig, DatabaseEngine, GeneratorConfig};
 
     #[test]
     fn renders_varchar_with_length() {
@@ -390,6 +403,7 @@ mod tests {
             password: Some("secret".to_string()),
             connection_string: None,
             config_file_path: None,
+            generator: GeneratorConfig::default(),
         };
 
         let result = validate_sql_server_config(&config);

@@ -3,8 +3,8 @@ use crate::app::ddl_builder::DdlBuilder;
 use crate::app::soft_delete::SoftDeleteResolver;
 use crate::app::type_mapper::TypeMapper;
 use crate::domain::{
-    DatabaseEngine, GeneratedCommand, GeneratedSql, SoftDeleteConfig, SoftDeletePreference,
-    TableSchema,
+    DatabaseEngine, GeneratedCommand, GeneratedSql, GeneratorConfig, SoftDeleteConfig,
+    SoftDeletePreference, TableSchema,
 };
 
 #[derive(Debug, Clone)]
@@ -24,12 +24,12 @@ pub struct GenerationService {
 }
 
 impl GenerationService {
-    pub fn new(engine: DatabaseEngine, executable: impl Into<String>) -> Self {
+    pub fn new(engine: DatabaseEngine, generator: GeneratorConfig) -> Self {
         Self {
             mapper: TypeMapper::new(engine),
             soft_delete_resolver: SoftDeleteResolver::new(engine),
             ddl_builder: DdlBuilder::new(engine),
-            command_builder: CommandBuilder::new(executable),
+            command_builder: CommandBuilder::new(generator),
         }
     }
 

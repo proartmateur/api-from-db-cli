@@ -34,6 +34,22 @@ pub struct ConnectionConfig {
     pub password: Option<String>,
     pub connection_string: Option<String>,
     pub config_file_path: Option<String>,
+    pub generator: GeneratorConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratorConfig {
+    pub cmd: String,
+    pub flags: Vec<String>,
+}
+
+impl Default for GeneratorConfig {
+    fn default() -> Self {
+        Self {
+            cmd: "gen.exe".to_string(),
+            flags: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

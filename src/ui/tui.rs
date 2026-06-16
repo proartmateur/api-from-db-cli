@@ -14,10 +14,12 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 
 use crate::adapters::config::ConfigLoader;
+use crate::adapters::sqlserver::SqlServerAdapter;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
+use crate::core::ports::{ConnectionProvider, MetadataExplorer};
 use crate::domain::{
-    ColumnSchema, DatabaseEngine, DatabaseObject, DatabaseObjectType, SoftDeletePreference,
-    TableSchema,
+    ColumnSchema, ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType,
+    SoftDeletePreference, TableSchema,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,15 +67,22 @@ impl SoftDeleteStrategy {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CatalogMode {
+    Mock,
+    Real,
+}
+
 #[derive(Debug, Clone)]
 struct MockTable {
     schema: TableSchema,
 }
 
 #[derive(Debug, Clone)]
-struct MockCatalog {
+struct Catalog {
     objects: Vec<DatabaseObject>,
     tables: Vec<MockTable>,
+    mode: CatalogMode,
 }
 
 #[derive(Debug, Clone)]
@@ -94,11 +103,12 @@ struct AppState {
     selected_action: usize,
     connection_source: Option<ConnectionSource>,
     engine: Option<DatabaseEngine>,
-    catalog: MockCatalog,
+    catalog: Catalog,
     selected_db_object: Option<DatabaseObject>,
     preview: Option<GenerationPreview>,
     process_result: Option<MockProcessResult>,
     config_file_path: Option<String>,
+    connection_config: Option<ConnectionConfig>,
     last_message: String,
 }
 
@@ -107,53 +117,6 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    fn handle_config_file_selection(&mut self) {
-        let loader = ConfigLoader;
-        self.state.connection_source = Some(ConnectionSource::ConfigFile);
-
-        match loader.ensure_default_file(None) {
-            Ok(result) if result.created => {
-                let path = result.path.display().to_string();
-                self.state.config_file_path = Some(path.clone());
-                self.state.last_message = format!(
-                    "Se genero `{}`. Editalo manualmente y presiona Enter otra vez para cargarlo.",
-                    path
-                );
-            }
-            Ok(result) => {
-                let path = result.path.display().to_string();
-                self.state.config_file_path = Some(path.clone());
-
-                match loader.load_from_json_file(result.path.as_path()) {
-                    Ok(config) => {
-                        self.state.engine = Some(config.engine);
-                        self.state.catalog = mock_catalog(config.engine);
-                        self.state.selected_object = 0;
-                        self.state.preview = None;
-                        self.state.process_result = None;
-                        self.state.screen = Screen::ObjectExplorer;
-                        self.state.last_message = format!(
-                            "Configuracion cargada desde `{}`. Se activo el flujo mock para {}.",
-                            path, config.engine
-                        );
-                    }
-                    Err(error) => {
-                        self.state.last_message = format!(
-                            "No se pudo cargar `{}`: {}. Edita el archivo y presiona Enter otra vez.",
-                            path, error
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                self.state.last_message = format!(
-                    "No fue posible preparar el archivo de configuracion: {}",
-                    error
-                );
-            }
-        }
-    }
-
     pub fn new() -> Self {
         Self {
             state: AppState {
@@ -171,6 +134,7 @@ impl TuiApp {
                 preview: None,
                 process_result: None,
                 config_file_path: None,
+                connection_config: None,
                 last_message: "Selecciona como quieres cargar la conexion mock.".to_string(),
             },
         }
@@ -225,6 +189,91 @@ impl TuiApp {
         }
     }
 
+    fn handle_config_file_selection(&mut self) {
+        let loader = ConfigLoader;
+        self.state.connection_source = Some(ConnectionSource::ConfigFile);
+
+        match loader.ensure_default_file(None) {
+            Ok(result) if result.created => {
+                let path = result.path.display().to_string();
+                self.state.config_file_path = Some(path.clone());
+                self.state.last_message = format!(
+                    "Se genero `{}`. Editalo manualmente y presiona Enter otra vez para cargarlo.",
+                    path
+                );
+            }
+            Ok(result) => {
+                let path = result.path.display().to_string();
+                self.state.config_file_path = Some(path.clone());
+
+                match loader.load_from_json_file(result.path.as_path()) {
+                    Ok(config) => self.activate_config_file_connection(config, path),
+                    Err(error) => {
+                        self.state.last_message = format!(
+                            "No se pudo cargar `{}`: {}. Edita el archivo y presiona Enter otra vez.",
+                            path, error
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                self.state.last_message = format!(
+                    "No fue posible preparar el archivo de configuracion: {}",
+                    error
+                );
+            }
+        }
+    }
+
+    fn activate_config_file_connection(&mut self, config: ConnectionConfig, path: String) {
+        self.state.connection_config = Some(config.clone());
+        self.state.engine = Some(config.engine);
+        self.state.selected_object = 0;
+        self.state.preview = None;
+        self.state.process_result = None;
+        self.state.selected_db_object = None;
+
+        match config.engine {
+            DatabaseEngine::SqlServer => {
+                let adapter = SqlServerAdapter;
+                match adapter.test_connection(&config) {
+                    Ok(()) => match adapter.list_objects(&config) {
+                        Ok(objects) => {
+                            self.state.catalog = Catalog {
+                                objects,
+                                tables: Vec::new(),
+                                mode: CatalogMode::Real,
+                            };
+                            self.state.screen = Screen::ObjectExplorer;
+                            self.state.last_message = format!(
+                                "Configuracion cargada desde `{}`. Conexion real a SQL Server establecida.",
+                                path
+                            );
+                        }
+                        Err(error) => {
+                            self.state.last_message = format!(
+                                "La conexion a SQL Server funciono, pero no se pudieron listar objetos: {}",
+                                error
+                            );
+                        }
+                    },
+                    Err(error) => {
+                        self.state.last_message =
+                            format!("No se pudo conectar a SQL Server con `{}`: {}", path, error);
+                    }
+                }
+            }
+            DatabaseEngine::PostgreSql => {
+                self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
+                self.state.screen = Screen::ObjectExplorer;
+                self.state.last_message = format!(
+                    "Configuracion cargada desde `{}`. PostgreSQL aun usa catalogo mock mientras conectamos su adapter real.",
+                    path
+                );
+            }
+        }
+    }
+
     fn handle_connection_source(&mut self, code: KeyCode) {
         let total = 2;
         match code {
@@ -233,6 +282,8 @@ impl TuiApp {
             KeyCode::Enter => match self.state.selected_connection_source {
                 0 => {
                     self.state.connection_source = Some(ConnectionSource::Manual);
+                    self.state.connection_config = None;
+                    self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
                     self.state.screen = Screen::EngineSelect;
                     self.state.last_message =
                         "Conexion mock preparada. Ahora elige el motor de base de datos."
@@ -261,6 +312,7 @@ impl TuiApp {
                 };
                 self.state.engine = Some(engine);
                 self.state.catalog = mock_catalog(engine);
+                self.state.connection_config = None;
                 self.state.selected_object = 0;
                 self.state.preview = None;
                 self.state.process_result = None;
@@ -278,9 +330,14 @@ impl TuiApp {
         let total = self.state.catalog.objects.len();
         match code {
             KeyCode::Esc => {
-                self.state.screen = Screen::EngineSelect;
+                self.state.screen =
+                    if self.state.connection_source == Some(ConnectionSource::ConfigFile) {
+                        Screen::ConnectionSource
+                    } else {
+                        Screen::EngineSelect
+                    };
                 self.state.last_message =
-                    "Puedes cambiar de motor sin tocar infraestructura real.".to_string();
+                    "Puedes cambiar de origen o motor sin perder control del flujo.".to_string();
             }
             KeyCode::Up => select_previous(&mut self.state.selected_object, total),
             KeyCode::Down => select_next(&mut self.state.selected_object, total),
@@ -301,7 +358,7 @@ impl TuiApp {
                     );
 
                     if object.object_type == DatabaseObjectType::Table {
-                        self.state.preview = self.generate_preview_for_selected_table(
+                        self.state.preview = self.load_preview_for_selected_table(
                             SoftDeletePreference::PreferDeleteEndpoint,
                             None,
                         );
@@ -323,10 +380,14 @@ impl TuiApp {
         match code {
             KeyCode::Esc => {
                 self.state.screen = Screen::ObjectExplorer;
-                self.state.last_message = "Regresaste al explorador de objetos mock.".to_string();
+                self.state.last_message = "Regresaste al explorador de objetos.".to_string();
             }
             KeyCode::Enter if selected.object_type == DatabaseObjectType::Table => {
-                if self.needs_soft_delete_decision() {
+                if self.state.preview.is_none() {
+                    self.state.last_message =
+                        "No fue posible preparar la tabla. Revisa la conexion o el schema."
+                            .to_string();
+                } else if self.needs_soft_delete_decision() {
                     self.state.screen = Screen::SoftDeleteStrategy;
                     self.state.selected_soft_delete_strategy = 0;
                     self.state.last_message =
@@ -356,15 +417,14 @@ impl TuiApp {
             KeyCode::Down => select_next(&mut self.state.selected_soft_delete_strategy, total),
             KeyCode::Enter => match self.selected_strategy() {
                 SoftDeleteStrategy::CreateDeletedAt => {
-                    self.state.preview = self.generate_preview_for_selected_table(
+                    self.state.preview = self.load_preview_for_selected_table(
                         SoftDeletePreference::PreferDeleteEndpoint,
                         None,
                     );
                     self.state.screen = Screen::SqlPreview;
                     self.state.selected_action = 0;
                     self.state.last_message =
-                        "Se genero el ALTER TABLE mock para revisar antes de continuar."
-                            .to_string();
+                        "Se genero el ALTER TABLE para revisar antes de continuar.".to_string();
                 }
                 SoftDeleteStrategy::UseExistingField => {
                     self.state.selected_manual_field = 0;
@@ -373,14 +433,14 @@ impl TuiApp {
                         "Selecciona una columna datetime existente para soft delete.".to_string();
                 }
                 SoftDeleteStrategy::ContinueWithoutDelete => {
-                    self.state.preview = self.generate_preview_for_selected_table(
+                    self.state.preview = self.load_preview_for_selected_table(
                         SoftDeletePreference::SkipDeleteEndpoint,
                         None,
                     );
                     self.state.screen = Screen::CommandPreview;
                     self.state.selected_action = 0;
                     self.state.last_message =
-                        "Seguimos sin endpoint delete para esta API mock.".to_string();
+                        "Seguimos sin endpoint delete para esta API.".to_string();
                 }
             },
             _ => {}
@@ -403,16 +463,14 @@ impl TuiApp {
                     .get(self.state.selected_manual_field)
                     .cloned()
                 {
-                    self.state.preview = self.generate_preview_for_selected_table(
+                    self.state.preview = self.load_preview_for_selected_table(
                         SoftDeletePreference::PreferDeleteEndpoint,
                         Some(field.as_str()),
                     );
                     self.state.screen = Screen::CommandPreview;
                     self.state.selected_action = 0;
-                    self.state.last_message = format!(
-                        "Usaremos `{}` como columna de soft delete para el mock.",
-                        field
-                    );
+                    self.state.last_message =
+                        format!("Usaremos `{}` como columna de soft delete.", field);
                 }
             }
             _ => {}
@@ -434,25 +492,25 @@ impl TuiApp {
                     self.state.screen = Screen::CommandPreview;
                     self.state.selected_action = 0;
                     self.state.last_message =
-                        "ALTER TABLE mock confirmado. La metadata se considera refrescada."
+                        "ALTER TABLE confirmado para este flujo. La metadata se considera refrescada."
                             .to_string();
                 }
                 1 => {
                     self.state.screen = Screen::CommandPreview;
                     self.state.selected_action = 0;
                     self.state.last_message =
-                        "SQL mock marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
+                        "SQL marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
                             .to_string();
                 }
                 2 => {
                     self.state.last_message =
-                        "SQL mock marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
+                        "SQL marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
                             .to_string();
                 }
                 _ => {
                     self.state.screen = Screen::SoftDeleteStrategy;
                     self.state.last_message =
-                        "Operacion cancelada. La base mock sigue intacta.".to_string();
+                        "Operacion cancelada. La base sigue intacta.".to_string();
                 }
             },
             _ => {}
@@ -485,18 +543,18 @@ impl TuiApp {
                         Some(mock_process_result(self.state.preview.as_ref()));
                     self.state.screen = Screen::ProcessResult;
                     self.state.last_message =
-                        "Ejecucion mock completada. Ya puedes revisar stdout y stderr.".to_string();
+                        "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
                 }
                 1 => {
                     self.state.process_result =
                         Some(mock_external_process_result(self.state.preview.as_ref()));
                     self.state.screen = Screen::ProcessResult;
                     self.state.last_message =
-                        "Comando mock marcado como copiado para ejecucion externa.".to_string();
+                        "Comando marcado como copiado para ejecucion externa.".to_string();
                 }
                 2 => {
                     self.state.last_message =
-                        "Comando mock marcado como copiado al portapapeles virtual.".to_string();
+                        "Comando marcado como copiado al portapapeles virtual.".to_string();
                 }
                 _ => {
                     self.state.screen = Screen::ObjectExplorer;
@@ -513,8 +571,7 @@ impl TuiApp {
             KeyCode::Esc | KeyCode::Enter => {
                 self.state.screen = Screen::ObjectExplorer;
                 self.state.last_message =
-                    "El flujo mock termino. Puedes probar otra tabla o cambiar de motor."
-                        .to_string();
+                    "El flujo termino. Puedes probar otra tabla o cambiar de motor.".to_string();
             }
             _ => {}
         }
@@ -537,7 +594,7 @@ impl TuiApp {
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from("TUI mock del flujo principal de generacion"),
+            Line::from("TUI del flujo principal de generacion"),
         ]))
         .block(Block::default().borders(Borders::ALL).title("Proyecto"));
         frame.render_widget(title, areas[0]);
@@ -623,7 +680,10 @@ impl TuiApp {
         );
 
         let right_text = vec![
-            Line::from("Conexion mock exitosa."),
+            Line::from(match self.state.catalog.mode {
+                CatalogMode::Mock => "Conexion mock activa.",
+                CatalogMode::Real => "Conexion real activa.",
+            }),
             Line::from(format!(
                 "Origen: {}",
                 self.state
@@ -639,7 +699,15 @@ impl TuiApp {
                     .unwrap_or_else(|| "pendiente".to_string())
             )),
             Line::from(""),
-            Line::from("Incluye tablas, funciones o stored procedures simulados."),
+            Line::from(match self.state.catalog.mode {
+                CatalogMode::Mock => {
+                    "Incluye tablas, funciones o stored procedures simulados.".to_string()
+                }
+                CatalogMode::Real => {
+                    "Los objetos vienen desde SQL Server usando el archivo de configuracion."
+                        .to_string()
+                }
+            }),
             Line::from(self.state.last_message.clone()),
         ];
         let details = Paragraph::new(Text::from(right_text))
@@ -672,6 +740,10 @@ impl TuiApp {
                         column.name, column.normalized_type, column.db_type
                     )));
                 }
+            } else {
+                lines.push(Line::from(
+                    "No fue posible cargar la estructura de la tabla.",
+                ));
             }
 
             Paragraph::new(Text::from(lines))
@@ -685,7 +757,6 @@ impl TuiApp {
                     selected.name
                 )),
                 Line::from(""),
-                Line::from("La exploracion de metadata esta simulada."),
                 Line::from("La generacion de API desde este tipo de objeto aun no esta soportada."),
             ]))
             .block(Block::default().borders(Borders::ALL).title("Metadata"))
@@ -768,7 +839,7 @@ impl TuiApp {
         frame.render_widget(sql_widget, chunks[0]);
 
         let actions = vec![
-            ListItem::new("Ejecutar ALTER TABLE mock y continuar"),
+            ListItem::new("Ejecutar ALTER TABLE y continuar"),
             ListItem::new("Copiar SQL y continuar al comando"),
             ListItem::new("Copiar SQL y quedarse aqui"),
             ListItem::new("Cancelar"),
@@ -785,13 +856,22 @@ impl TuiApp {
     fn draw_command_preview(&self, frame: &mut Frame, area: Rect) {
         let chunks = two_column_layout(area);
         let preview = self.state.preview.as_ref();
+        let generator = self.generator_config_for_current_flow();
         let command = preview
             .map(|item| item.generated_command.raw_command.clone())
             .unwrap_or_else(|| "No hay comando generado.".to_string());
+        let flags = if generator.flags.is_empty() {
+            "(sin flags)".to_string()
+        } else {
+            generator.flags.join(" ")
+        };
 
         let lines = vec![
-            Line::from("Comando listo para el generador mock:"),
+            Line::from("Configuracion activa del generador:"),
+            Line::from(format!("cmd: {}", generator.cmd)),
+            Line::from(format!("flags: {}", flags)),
             Line::from(""),
+            Line::from("Comando final:"),
             Line::from(command),
             Line::from(""),
             Line::from(
@@ -810,7 +890,7 @@ impl TuiApp {
         frame.render_widget(command_widget, chunks[0]);
 
         let actions = vec![
-            ListItem::new("Ejecutar comando mock"),
+            ListItem::new("Ejecutar comando"),
             ListItem::new("Copiar comando y marcar ejecucion externa"),
             ListItem::new("Copiar comando y quedarse aqui"),
             ListItem::new("Cancelar"),
@@ -844,7 +924,7 @@ impl TuiApp {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("Resultado del Generador Mock"),
+                    .title("Resultado del Generador"),
             )
             .wrap(Wrap { trim: true });
         frame.render_widget(Clear, area);
@@ -867,24 +947,75 @@ impl TuiApp {
         }
     }
 
-    fn generate_preview_for_selected_table(
-        &self,
+    fn load_preview_for_selected_table(
+        &mut self,
         preference: SoftDeletePreference,
         manually_selected_field: Option<&str>,
     ) -> Option<GenerationPreview> {
+        let selected = self.state.selected_db_object.as_ref()?.clone();
         let engine = self.state.engine?;
-        let selected = self.state.selected_db_object.as_ref()?;
-        let mock_table = self.state.catalog.tables.iter().find(|table| {
-            table.schema.name == selected.name
-                && table.schema.schema == selected.schema.clone().unwrap_or_default()
-        })?;
 
-        let service = GenerationService::new(engine, mock_generator_executable(engine));
-        Some(service.preview_from_table(
-            mock_table.schema.clone(),
-            preference,
-            manually_selected_field,
-        ))
+        let schema = match self.state.catalog.mode {
+            CatalogMode::Mock => self.mock_table_schema(&selected),
+            CatalogMode::Real => self.real_table_schema(&selected),
+        };
+
+        match schema {
+            Ok(schema) => {
+                Some(self.preview_from_schema(schema, preference, manually_selected_field))
+            }
+            Err(error) => {
+                self.state.last_message = format!(
+                    "No fue posible leer la estructura de {}.{}: {}",
+                    selected.schema.as_deref().unwrap_or("<sin schema>"),
+                    selected.name,
+                    error
+                );
+                self.state.engine = Some(engine);
+                None
+            }
+        }
+    }
+
+    fn preview_from_schema(
+        &self,
+        schema: TableSchema,
+        preference: SoftDeletePreference,
+        manually_selected_field: Option<&str>,
+    ) -> GenerationPreview {
+        let engine = self.state.engine.unwrap_or(DatabaseEngine::PostgreSql);
+        let service = GenerationService::new(engine, self.generator_config_for_current_flow());
+        service.preview_from_table(schema, preference, manually_selected_field)
+    }
+
+    fn mock_table_schema(&self, selected: &DatabaseObject) -> Result<TableSchema, String> {
+        self.state
+            .catalog
+            .tables
+            .iter()
+            .find(|table| {
+                table.schema.name == selected.name
+                    && table.schema.schema == selected.schema.clone().unwrap_or_default()
+            })
+            .map(|table| table.schema.clone())
+            .ok_or_else(|| "la tabla no existe en el catalogo mock".to_string())
+    }
+
+    fn real_table_schema(&self, selected: &DatabaseObject) -> Result<TableSchema, String> {
+        let config = self
+            .state
+            .connection_config
+            .as_ref()
+            .ok_or_else(|| "no hay conexion real activa".to_string())?;
+        let schema = selected
+            .schema
+            .as_deref()
+            .ok_or_else(|| "el objeto no trae schema".to_string())?;
+
+        let adapter = SqlServerAdapter;
+        adapter
+            .get_table_schema(config, schema, &selected.name)
+            .map_err(|error| error.to_string())
     }
 
     fn manual_soft_delete_candidates(&self) -> Vec<String> {
@@ -910,6 +1041,17 @@ impl TuiApp {
             .map(|preview| preview.soft_delete.field_was_created)
             .unwrap_or(false)
     }
+
+    fn generator_config_for_current_flow(&self) -> crate::domain::GeneratorConfig {
+        self.state
+            .connection_config
+            .as_ref()
+            .map(|config| config.generator.clone())
+            .unwrap_or_else(|| crate::domain::GeneratorConfig {
+                cmd: "gen.exe".to_string(),
+                flags: vec!["--mvc".to_string()],
+            })
+    }
 }
 
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
@@ -930,7 +1072,7 @@ fn render_selectable_list(
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Yellow)
+                .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("› ");
@@ -998,13 +1140,6 @@ fn object_type_label(object_type: DatabaseObjectType) -> &'static str {
     }
 }
 
-fn mock_generator_executable(engine: DatabaseEngine) -> &'static str {
-    match engine {
-        DatabaseEngine::PostgreSql => "gen.exe",
-        DatabaseEngine::SqlServer => "python-gen",
-    }
-}
-
 fn mock_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult {
     let command = preview
         .map(|item| item.generated_command.raw_command.clone())
@@ -1033,9 +1168,10 @@ fn mock_external_process_result(preview: Option<&GenerationPreview>) -> MockProc
     }
 }
 
-fn mock_catalog(engine: DatabaseEngine) -> MockCatalog {
+fn mock_catalog(engine: DatabaseEngine) -> Catalog {
     match engine {
-        DatabaseEngine::PostgreSql => MockCatalog {
+        DatabaseEngine::PostgreSql => Catalog {
+            mode: CatalogMode::Mock,
             objects: vec![
                 DatabaseObject {
                     name: "users".to_string(),
@@ -1086,7 +1222,8 @@ fn mock_catalog(engine: DatabaseEngine) -> MockCatalog {
                 },
             ],
         },
-        DatabaseEngine::SqlServer => MockCatalog {
+        DatabaseEngine::SqlServer => Catalog {
+            mode: CatalogMode::Mock,
             objects: vec![
                 DatabaseObject {
                     name: "Employees".to_string(),
