@@ -906,20 +906,26 @@ impl TuiApp {
 
     fn draw_process_result(&self, frame: &mut Frame, area: Rect) {
         let result = self.state.process_result.as_ref();
-        let lines = vec![
+        let mut lines = vec![
             Line::from(format!(
                 "Exit code: {}",
                 result.map(|item| item.exit_code).unwrap_or(-1)
             )),
             Line::from(""),
             Line::from("STDOUT:"),
-            Line::from(result.map(|item| item.stdout.clone()).unwrap_or_default()),
-            Line::from(""),
-            Line::from("STDERR:"),
-            Line::from(result.map(|item| item.stderr.clone()).unwrap_or_default()),
-            Line::from(""),
-            Line::from("Presiona Enter o Esc para volver al explorador."),
         ];
+        lines.extend(split_render_lines(
+            result.map(|item| item.stdout.as_str()).unwrap_or_default(),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from("STDERR:"));
+        lines.extend(split_render_lines(
+            result.map(|item| item.stderr.as_str()).unwrap_or_default(),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            "Presiona Enter o Esc para volver al explorador.",
+        ));
         let widget = Paragraph::new(Text::from(lines))
             .block(
                 Block::default()
@@ -1060,6 +1066,13 @@ fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Res
     terminal.show_cursor()
 }
 
+fn split_render_lines(content: &str) -> Vec<Line<'_>> {
+    if content.is_empty() {
+        return vec![Line::from("")];
+    }
+
+    content.split('\n').map(Line::from).collect()
+}
 fn render_selectable_list(
     frame: &mut Frame,
     area: Rect,
@@ -1148,7 +1161,7 @@ fn mock_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult
     MockProcessResult {
         exit_code: 0,
         stdout: format!(
-            "Ejecutando: {command}\nAPI generada correctamente.\nModels, services y routers creados."
+            "Ejecutando: {command}\n\nAPI generada correctamente.\nModels, services y routers creados."
         ),
         stderr: String::new(),
     }
