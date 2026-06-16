@@ -1,4 +1,6 @@
+use std::env;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -73,6 +75,13 @@ enum CatalogMode {
     Real,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GeneratorBinaryState {
+    Available { path: PathBuf },
+    Missing { searched_paths: Vec<PathBuf> },
+    Error(String),
+}
+
 #[derive(Debug, Clone)]
 struct MockTable {
     schema: TableSchema,
@@ -109,6 +118,7 @@ struct AppState {
     process_result: Option<MockProcessResult>,
     config_file_path: Option<String>,
     connection_config: Option<ConnectionConfig>,
+    generator_binary_state: GeneratorBinaryState,
     last_message: String,
 }
 
@@ -135,7 +145,8 @@ impl TuiApp {
                 process_result: None,
                 config_file_path: None,
                 connection_config: None,
-                last_message: "Selecciona como quieres cargar la conexion mock.".to_string(),
+                generator_binary_state: detect_generator_binary_state(),
+                last_message: initial_connection_message(),
             },
         }
     }
@@ -186,6 +197,43 @@ impl TuiApp {
             Screen::SqlPreview => self.handle_sql_preview(code),
             Screen::CommandPreview => self.handle_command_preview(code),
             Screen::ProcessResult => self.handle_process_result(code),
+        }
+    }
+
+    fn refresh_generator_binary_state(&mut self) {
+        self.state.generator_binary_state = detect_generator_binary_state();
+    }
+
+    fn ensure_generator_binary_ready(&mut self) -> bool {
+        self.refresh_generator_binary_state();
+
+        match &self.state.generator_binary_state {
+            GeneratorBinaryState::Available { path } => {
+                self.state.last_message = format!(
+                    "Generador detectado en `{}`. Ya puedes continuar.",
+                    path.display()
+                );
+                true
+            }
+            GeneratorBinaryState::Missing { searched_paths } => {
+                let searched = searched_paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" o ");
+                self.state.last_message = format!(
+                    "No se encontro `gen` ni `gen.exe` en la raiz del proyecto. Colocalo en {} y presiona Enter para reintentar.",
+                    searched
+                );
+                false
+            }
+            GeneratorBinaryState::Error(error) => {
+                self.state.last_message = format!(
+                    "No fue posible validar el generador en la raiz del proyecto: {}",
+                    error
+                );
+                false
+            }
         }
     }
 
@@ -279,18 +327,24 @@ impl TuiApp {
         match code {
             KeyCode::Up => select_previous(&mut self.state.selected_connection_source, total),
             KeyCode::Down => select_next(&mut self.state.selected_connection_source, total),
-            KeyCode::Enter => match self.state.selected_connection_source {
-                0 => {
-                    self.state.connection_source = Some(ConnectionSource::Manual);
-                    self.state.connection_config = None;
-                    self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
-                    self.state.screen = Screen::EngineSelect;
-                    self.state.last_message =
-                        "Conexion mock preparada. Ahora elige el motor de base de datos."
-                            .to_string();
+            KeyCode::Enter => {
+                if !self.ensure_generator_binary_ready() {
+                    return;
                 }
-                _ => self.handle_config_file_selection(),
-            },
+
+                match self.state.selected_connection_source {
+                    0 => {
+                        self.state.connection_source = Some(ConnectionSource::Manual);
+                        self.state.connection_config = None;
+                        self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
+                        self.state.screen = Screen::EngineSelect;
+                        self.state.last_message =
+                            "Generador validado. Conexion mock preparada. Ahora elige el motor de base de datos."
+                                .to_string();
+                    }
+                    _ => self.handle_config_file_selection(),
+                }
+            }
             _ => {}
         }
     }
@@ -938,7 +992,12 @@ impl TuiApp {
     }
 
     fn footer_text(&self) -> String {
-        let mut parts = vec!["↑/↓ mover", "Enter confirmar", "Esc regresar", "q salir"];
+        let mut parts = vec![
+            "↑/↓ mover",
+            "Enter confirmar/reintentar",
+            "Esc regresar",
+            "q salir",
+        ];
         if !self.state.last_message.is_empty() {
             parts.push(self.state.last_message.as_str());
         }
@@ -1060,6 +1119,48 @@ impl TuiApp {
     }
 }
 
+fn initial_connection_message() -> String {
+    match detect_generator_binary_state() {
+        GeneratorBinaryState::Available { path } => format!(
+            "Se encontro el generador en `{}`. Selecciona como quieres cargar la conexion.",
+            path.display()
+        ),
+        GeneratorBinaryState::Missing { searched_paths } => format!(
+            "No se encontro `gen` ni `gen.exe` en la raiz del proyecto. Colocalo en {} y presiona Enter para reintentar.",
+            searched_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" o ")
+        ),
+        GeneratorBinaryState::Error(error) => format!(
+            "No fue posible validar el generador en la raiz del proyecto: {}",
+            error
+        ),
+    }
+}
+
+fn detect_generator_binary_state() -> GeneratorBinaryState {
+    let current_dir = match env::current_dir() {
+        Ok(path) => path,
+        Err(error) => return GeneratorBinaryState::Error(error.to_string()),
+    };
+
+    let candidates = [current_dir.join("gen"), current_dir.join("gen.exe")];
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return GeneratorBinaryState::Available {
+                path: candidate.clone(),
+            };
+        }
+    }
+
+    GeneratorBinaryState::Missing {
+        searched_paths: candidates.into_iter().collect(),
+    }
+}
+
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -1113,10 +1214,46 @@ fn draw_menu(
     render_selectable_list(frame, chunks[0], title, items, selected);
 
     let helper_text = helper.unwrap_or("Selecciona una opcion para continuar.");
+    let is_alert = is_critical_helper_message(helper_text);
+    let helper_block = if is_alert {
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Atencion")
+            .style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .border_style(
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )
+    } else {
+        Block::default().borders(Borders::ALL).title("Detalle")
+    };
     let helper_widget = Paragraph::new(helper_text)
-        .block(Block::default().borders(Borders::ALL).title("Detalle"))
+        .block(helper_block)
+        .style(if is_alert {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Red)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        })
         .wrap(Wrap { trim: true });
     frame.render_widget(helper_widget, chunks[1]);
+}
+
+fn is_critical_helper_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("no se encontro")
+        || lower.contains("no fue posible")
+        || lower.contains("faltante")
+        || lower.contains("error")
 }
 
 fn two_column_layout(area: Rect) -> [Rect; 2] {
