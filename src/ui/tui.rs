@@ -16,12 +16,13 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 
 use crate::adapters::config::ConfigLoader;
+use crate::adapters::process::StdProcessRunner;
 use crate::adapters::sqlserver::SqlServerAdapter;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
-use crate::core::ports::{ConnectionProvider, MetadataExplorer};
+use crate::core::ports::{ConnectionProvider, MetadataExplorer, ProcessRunner};
 use crate::domain::{
     ColumnSchema, ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType,
-    SoftDeletePreference, TableSchema,
+    ProcessResult, SoftDeletePreference, TableSchema,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,13 +96,6 @@ struct Catalog {
 }
 
 #[derive(Debug, Clone)]
-struct MockProcessResult {
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-#[derive(Debug, Clone)]
 struct AppState {
     screen: Screen,
     selected_connection_source: usize,
@@ -115,10 +109,11 @@ struct AppState {
     catalog: Catalog,
     selected_db_object: Option<DatabaseObject>,
     preview: Option<GenerationPreview>,
-    process_result: Option<MockProcessResult>,
+    process_result: Option<ProcessResult>,
     config_file_path: Option<String>,
     connection_config: Option<ConnectionConfig>,
     generator_binary_state: GeneratorBinaryState,
+    process_result_scroll: u16,
     last_message: String,
 }
 
@@ -146,6 +141,7 @@ impl TuiApp {
                 config_file_path: None,
                 connection_config: None,
                 generator_binary_state: detect_generator_binary_state(),
+                process_result_scroll: 0,
                 last_message: initial_connection_message(),
             },
         }
@@ -592,16 +588,30 @@ impl TuiApp {
             KeyCode::Up => select_previous(&mut self.state.selected_action, total),
             KeyCode::Down => select_next(&mut self.state.selected_action, total),
             KeyCode::Enter => match self.state.selected_action {
-                0 => {
-                    self.state.process_result =
-                        Some(mock_process_result(self.state.preview.as_ref()));
-                    self.state.screen = Screen::ProcessResult;
-                    self.state.last_message =
-                        "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
-                }
+                0 => match self.run_generated_command() {
+                    Ok(result) => {
+                        self.state.process_result = Some(result);
+                        self.state.screen = Screen::ProcessResult;
+                        self.state.last_message =
+                            "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
+                    }
+                    Err(error) => {
+                        self.state.process_result = Some(ProcessResult {
+                            exit_code: -1,
+                            stdout: String::new(),
+                            stderr: error,
+                            success: false,
+                        });
+                        self.state.screen = Screen::ProcessResult;
+                        self.state.last_message =
+                            "La ejecucion del comando fallo antes de completar el proceso."
+                                .to_string();
+                    }
+                },
                 1 => {
                     self.state.process_result =
                         Some(mock_external_process_result(self.state.preview.as_ref()));
+                    self.state.process_result_scroll = 0;
                     self.state.screen = Screen::ProcessResult;
                     self.state.last_message =
                         "Comando marcado como copiado para ejecucion externa.".to_string();
@@ -621,7 +631,36 @@ impl TuiApp {
     }
 
     fn handle_process_result(&mut self, code: KeyCode) {
+        let total_lines = self.process_result_line_count() as u16;
         match code {
+            KeyCode::Up => {
+                self.state.process_result_scroll =
+                    self.state.process_result_scroll.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.state.process_result_scroll = self
+                    .state
+                    .process_result_scroll
+                    .saturating_add(1)
+                    .min(total_lines.saturating_sub(1));
+            }
+            KeyCode::PageUp => {
+                self.state.process_result_scroll =
+                    self.state.process_result_scroll.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                self.state.process_result_scroll = self
+                    .state
+                    .process_result_scroll
+                    .saturating_add(10)
+                    .min(total_lines.saturating_sub(1));
+            }
+            KeyCode::Home => {
+                self.state.process_result_scroll = 0;
+            }
+            KeyCode::End => {
+                self.state.process_result_scroll = total_lines.saturating_sub(1);
+            }
             KeyCode::Esc | KeyCode::Enter => {
                 self.state.screen = Screen::ObjectExplorer;
                 self.state.last_message =
@@ -959,34 +998,15 @@ impl TuiApp {
     }
 
     fn draw_process_result(&self, frame: &mut Frame, area: Rect) {
-        let result = self.state.process_result.as_ref();
-        let mut lines = vec![
-            Line::from(format!(
-                "Exit code: {}",
-                result.map(|item| item.exit_code).unwrap_or(-1)
-            )),
-            Line::from(""),
-            Line::from("STDOUT:"),
-        ];
-        lines.extend(split_render_lines(
-            result.map(|item| item.stdout.as_str()).unwrap_or_default(),
-        ));
-        lines.push(Line::from(""));
-        lines.push(Line::from("STDERR:"));
-        lines.extend(split_render_lines(
-            result.map(|item| item.stderr.as_str()).unwrap_or_default(),
-        ));
-        lines.push(Line::from(""));
-        lines.push(Line::from(
-            "Presiona Enter o Esc para volver al explorador.",
-        ));
+        let lines = self.build_process_result_lines();
         let widget = Paragraph::new(Text::from(lines))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Resultado del Generador"),
             )
-            .wrap(Wrap { trim: true });
+            .scroll((self.state.process_result_scroll, 0))
+            .wrap(Wrap { trim: false });
         frame.render_widget(Clear, area);
         frame.render_widget(widget, area);
     }
@@ -1116,6 +1136,48 @@ impl TuiApp {
                 cmd: "gen.exe".to_string(),
                 flags: vec!["--mvc".to_string()],
             })
+    }
+
+    fn build_process_result_lines(&self) -> Vec<Line<'_>> {
+        let result = self.state.process_result.as_ref();
+        let mut lines = vec![
+            Line::from(format!(
+                "Exit code: {}",
+                result.map(|item| item.exit_code).unwrap_or(-1)
+            )),
+            Line::from(""),
+            Line::from("STDOUT:"),
+        ];
+        lines.extend(split_render_lines(
+            result.map(|item| item.stdout.as_str()).unwrap_or_default(),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from("STDERR:"));
+        lines.extend(split_render_lines(
+            result.map(|item| item.stderr.as_str()).unwrap_or_default(),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            "Usa ↑/↓, PgUp/PgDn, Home/End para navegar. Enter o Esc para volver.",
+        ));
+        lines
+    }
+
+    fn process_result_line_count(&self) -> usize {
+        self.build_process_result_lines().len()
+    }
+
+    fn run_generated_command(&self) -> Result<ProcessResult, String> {
+        let preview = self
+            .state
+            .preview
+            .as_ref()
+            .ok_or_else(|| "No hay comando generado para ejecutar.".to_string())?;
+
+        let runner = StdProcessRunner;
+        runner
+            .run(&preview.generated_command)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -1290,31 +1352,18 @@ fn object_type_label(object_type: DatabaseObjectType) -> &'static str {
     }
 }
 
-fn mock_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult {
+fn mock_external_process_result(preview: Option<&GenerationPreview>) -> ProcessResult {
     let command = preview
         .map(|item| item.generated_command.raw_command.clone())
         .unwrap_or_else(|| "gen.exe demo id:int".to_string());
 
-    MockProcessResult {
-        exit_code: 0,
-        stdout: format!(
-            "Ejecutando: {command}\n\nAPI generada correctamente.\nModels, services y routers creados."
-        ),
-        stderr: String::new(),
-    }
-}
-
-fn mock_external_process_result(preview: Option<&GenerationPreview>) -> MockProcessResult {
-    let command = preview
-        .map(|item| item.generated_command.raw_command.clone())
-        .unwrap_or_else(|| "gen.exe demo id:int".to_string());
-
-    MockProcessResult {
+    ProcessResult {
         exit_code: 0,
         stdout: format!(
             "Comando copiado para ejecucion externa:\n{command}\nPuedes correrlo en otra herramienta y volver despues."
         ),
         stderr: String::new(),
+        success: true,
     }
 }
 
