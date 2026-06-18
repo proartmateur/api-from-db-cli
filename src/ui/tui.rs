@@ -20,15 +20,16 @@ use crate::adapters::sqlserver::SqlServerAdapter;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
 use crate::core::ports::{ConnectionProvider, MetadataExplorer, ProcessRunner};
 use crate::domain::{
-    ColumnSchema, ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType,
-    ProcessResult, SoftDeletePreference, TableSchema,
+    ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType, ProcessResult,
+    SoftDeletePreference, TableSchema,
 };
 use crate::ui::handlers;
+use crate::ui::mocks;
 use crate::ui::screens;
 use crate::ui::state::{
     AppState, Catalog, CatalogMode, CommandPreviewAction, CommandPreviewScreenState,
     ConnectionSource, ConnectionSourceScreenState, EngineOption, EngineSelectScreenState,
-    GeneratorBinaryState, MockTable, ObjectExplorerScreenState, ProcessResultScreenState, Screen,
+    GeneratorBinaryState, ObjectExplorerScreenState, ProcessResultScreenState, Screen,
     SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction, SqlPreviewScreenState,
 };
 
@@ -61,7 +62,7 @@ impl TuiApp {
                 process_result_screen: ProcessResultScreenState { scroll: 0 },
                 connection_source: None,
                 engine: None,
-                catalog: mock_catalog(DatabaseEngine::PostgreSql),
+                catalog: mocks::catalog(DatabaseEngine::PostgreSql),
                 selected_db_object: None,
                 preview: None,
                 process_result: None,
@@ -234,7 +235,7 @@ impl TuiApp {
                 }
             }
             DatabaseEngine::PostgreSql => {
-                self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
+                self.state.catalog = mocks::catalog(DatabaseEngine::PostgreSql);
                 self.state.screen = Screen::ObjectExplorer;
                 self.state.last_message = format!(
                     "Configuracion cargada desde `{}`. PostgreSQL aun usa catalogo mock mientras conectamos su adapter real.",
@@ -704,128 +705,5 @@ pub(crate) fn object_type_label(object_type: DatabaseObjectType) -> &'static str
         DatabaseObjectType::Table => "table",
         DatabaseObjectType::Function => "function",
         DatabaseObjectType::StoredProcedure => "stored procedure",
-    }
-}
-
-pub(crate) fn mock_external_process_result(preview: Option<&GenerationPreview>) -> ProcessResult {
-    let command = preview
-        .map(|item| item.generated_command.raw_command.clone())
-        .unwrap_or_else(|| "gen.exe demo id:int".to_string());
-
-    ProcessResult {
-        exit_code: 0,
-        stdout: format!(
-            "Comando copiado para ejecucion externa:\n{command}\nPuedes correrlo en otra herramienta y volver despues."
-        ),
-        stderr: String::new(),
-        success: true,
-    }
-}
-
-pub(crate) fn mock_catalog(engine: DatabaseEngine) -> Catalog {
-    match engine {
-        DatabaseEngine::PostgreSql => Catalog {
-            mode: CatalogMode::Mock,
-            objects: vec![
-                DatabaseObject {
-                    name: "users".to_string(),
-                    schema: Some("public".to_string()),
-                    object_type: DatabaseObjectType::Table,
-                    engine,
-                },
-                DatabaseObject {
-                    name: "orders".to_string(),
-                    schema: Some("sales".to_string()),
-                    object_type: DatabaseObjectType::Table,
-                    engine,
-                },
-                DatabaseObject {
-                    name: "calculate_total".to_string(),
-                    schema: Some("sales".to_string()),
-                    object_type: DatabaseObjectType::Function,
-                    engine,
-                },
-            ],
-            tables: vec![
-                MockTable {
-                    schema: TableSchema::new(
-                        "public",
-                        "users",
-                        vec![
-                            ColumnSchema::new("id", "integer", false, 1),
-                            ColumnSchema::new("name", "varchar(50)", false, 2),
-                            ColumnSchema::new("email", "varchar(255)", false, 3),
-                            ColumnSchema::new("created_at", "timestamp", false, 4),
-                            ColumnSchema::new("updated_at", "timestamp", true, 5),
-                        ],
-                        vec!["id".to_string()],
-                    ),
-                },
-                MockTable {
-                    schema: TableSchema::new(
-                        "sales",
-                        "orders",
-                        vec![
-                            ColumnSchema::new("id", "bigint", false, 1),
-                            ColumnSchema::new("customer_name", "text", false, 2),
-                            ColumnSchema::new("total", "numeric(10,2)", false, 3),
-                            ColumnSchema::new("deleted_at", "timestamptz", true, 4),
-                        ],
-                        vec!["id".to_string()],
-                    ),
-                },
-            ],
-        },
-        DatabaseEngine::SqlServer => Catalog {
-            mode: CatalogMode::Mock,
-            objects: vec![
-                DatabaseObject {
-                    name: "Employees".to_string(),
-                    schema: Some("dbo".to_string()),
-                    object_type: DatabaseObjectType::Table,
-                    engine,
-                },
-                DatabaseObject {
-                    name: "Invoices".to_string(),
-                    schema: Some("billing".to_string()),
-                    object_type: DatabaseObjectType::Table,
-                    engine,
-                },
-                DatabaseObject {
-                    name: "CreateInvoice".to_string(),
-                    schema: Some("billing".to_string()),
-                    object_type: DatabaseObjectType::StoredProcedure,
-                    engine,
-                },
-            ],
-            tables: vec![
-                MockTable {
-                    schema: TableSchema::new(
-                        "dbo",
-                        "Employees",
-                        vec![
-                            ColumnSchema::new("id", "int", false, 1),
-                            ColumnSchema::new("first_name", "nvarchar(100)", false, 2),
-                            ColumnSchema::new("last_name", "nvarchar(100)", false, 3),
-                            ColumnSchema::new("deactivated_on", "datetime2", true, 4),
-                        ],
-                        vec!["id".to_string()],
-                    ),
-                },
-                MockTable {
-                    schema: TableSchema::new(
-                        "billing",
-                        "Invoices",
-                        vec![
-                            ColumnSchema::new("id", "bigint", false, 1),
-                            ColumnSchema::new("folio", "varchar(30)", false, 2),
-                            ColumnSchema::new("issued_at", "datetimeoffset", false, 3),
-                            ColumnSchema::new("deleted_at", "datetime2", true, 4),
-                        ],
-                        vec!["id".to_string()],
-                    ),
-                },
-            ],
-        },
     }
 }

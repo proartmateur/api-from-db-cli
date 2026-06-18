@@ -1,8 +1,9 @@
 use crossterm::event::KeyCode;
 
 use crate::domain::DatabaseEngine;
+use crate::ui::mocks;
 use crate::ui::state::{ConnectionSource, Screen};
-use crate::ui::tui::{TuiApp, mock_catalog, next_connection_source, previous_connection_source};
+use crate::ui::tui::{TuiApp, next_connection_source, previous_connection_source};
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {
@@ -23,7 +24,7 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
                 ConnectionSource::Manual => {
                     app.state.connection_source = Some(ConnectionSource::Manual);
                     app.state.connection_config = None;
-                    app.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
+                    app.state.catalog = mocks::catalog(DatabaseEngine::PostgreSql);
                     app.state.screen = Screen::EngineSelect;
                     app.state.last_message =
                         "Generador validado. Conexion mock preparada. Ahora elige el motor de base de datos."
