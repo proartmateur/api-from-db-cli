@@ -1,0 +1,15 @@
+{
+  "id": "Busqueda PTU",
+  "name": "SQL Server PTU 33.20",
+  "engine": "sqlserver",
+  "host": "172.16.33.20",
+  "port": 1433,
+  "database": "Busqueda_PTU",
+  "username": "sa",
+  "password": "Mcl4r3n1424",
+  "connection_string": null,
+  "gen":{
+    "cmd": "./gen",
+    "flag": "--mvc"
+  }
+}

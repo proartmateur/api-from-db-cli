@@ -1,0 +1,15 @@
+{
+  "id": "PostgreSQL",
+  "name": "PostgreSQL 33.12",
+  "engine": "postgresql",
+  "host": "172.16.33.12",
+  "port": 5435,
+  "database": "aleph",
+  "username": "user",
+  "password": "password",
+  "connection_string": null,
+  "gen": {
+    "cmd": "./gen",
+    "flags": ["--mvc"]
+  }
+}
