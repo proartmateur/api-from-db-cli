@@ -12,7 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
 use crate::adapters::config::ConfigLoader;
@@ -24,9 +24,10 @@ use crate::domain::{
     ColumnSchema, ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType,
     ProcessResult, SoftDeletePreference, TableSchema,
 };
+use crate::ui::screens;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Screen {
+pub(crate) enum Screen {
     ConnectionSource,
     EngineSelect,
     ObjectExplorer,
@@ -39,15 +40,15 @@ enum Screen {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConnectionSource {
+pub(crate) enum ConnectionSource {
     Manual,
     ConfigFile,
 }
 
 impl ConnectionSource {
-    const ALL: [Self; 2] = [Self::Manual, Self::ConfigFile];
+    pub(crate) const ALL: [Self; 2] = [Self::Manual, Self::ConfigFile];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Manual => "Captura manual",
             Self::ConfigFile => "Archivo de configuracion",
@@ -56,20 +57,20 @@ impl ConnectionSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SoftDeleteStrategy {
+pub(crate) enum SoftDeleteStrategy {
     CreateDeletedAt,
     UseExistingField,
     ContinueWithoutDelete,
 }
 
 impl SoftDeleteStrategy {
-    const ALL: [Self; 3] = [
+    pub(crate) const ALL: [Self; 3] = [
         Self::CreateDeletedAt,
         Self::UseExistingField,
         Self::ContinueWithoutDelete,
     ];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::CreateDeletedAt => "Crear campo deleted_at",
             Self::UseExistingField => "Usar columna existente",
@@ -79,15 +80,15 @@ impl SoftDeleteStrategy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EngineOption {
+pub(crate) enum EngineOption {
     PostgreSql,
     SqlServer,
 }
 
 impl EngineOption {
-    const ALL: [Self; 2] = [Self::PostgreSql, Self::SqlServer];
+    pub(crate) const ALL: [Self; 2] = [Self::PostgreSql, Self::SqlServer];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::PostgreSql => "PostgreSQL",
             Self::SqlServer => "SQL Server",
@@ -103,7 +104,7 @@ impl EngineOption {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SqlPreviewAction {
+pub(crate) enum SqlPreviewAction {
     ExecuteAndContinue,
     CopyAndContinue,
     CopyAndStay,
@@ -111,14 +112,14 @@ enum SqlPreviewAction {
 }
 
 impl SqlPreviewAction {
-    const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::ExecuteAndContinue,
         Self::CopyAndContinue,
         Self::CopyAndStay,
         Self::Cancel,
     ];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::ExecuteAndContinue => "Ejecutar ALTER TABLE y continuar",
             Self::CopyAndContinue => "Copiar SQL y continuar al comando",
@@ -129,7 +130,7 @@ impl SqlPreviewAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CommandPreviewAction {
+pub(crate) enum CommandPreviewAction {
     ExecuteCommand,
     CopyAndMarkExternalExecution,
     CopyAndStay,
@@ -137,14 +138,14 @@ enum CommandPreviewAction {
 }
 
 impl CommandPreviewAction {
-    const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::ExecuteCommand,
         Self::CopyAndMarkExternalExecution,
         Self::CopyAndStay,
         Self::Cancel,
     ];
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::ExecuteCommand => "Ejecutar comando",
             Self::CopyAndMarkExternalExecution => "Copiar comando y marcar ejecucion externa",
@@ -155,55 +156,90 @@ impl CommandPreviewAction {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CatalogMode {
+pub(crate) enum CatalogMode {
     Mock,
     Real,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum GeneratorBinaryState {
+pub(crate) enum GeneratorBinaryState {
     Available { path: PathBuf },
     Missing { searched_paths: Vec<PathBuf> },
     Error(String),
 }
 
 #[derive(Debug, Clone)]
-struct MockTable {
-    schema: TableSchema,
+pub(crate) struct MockTable {
+    pub(crate) schema: TableSchema,
 }
 
 #[derive(Debug, Clone)]
-struct Catalog {
-    objects: Vec<DatabaseObject>,
-    tables: Vec<MockTable>,
-    mode: CatalogMode,
+pub(crate) struct Catalog {
+    pub(crate) objects: Vec<DatabaseObject>,
+    pub(crate) tables: Vec<MockTable>,
+    pub(crate) mode: CatalogMode,
 }
 
 #[derive(Debug, Clone)]
-struct AppState {
-    screen: Screen,
-    selected_connection_source: ConnectionSource,
-    selected_engine: EngineOption,
-    selected_object: usize,
-    selected_soft_delete_strategy: SoftDeleteStrategy,
-    selected_manual_field: usize,
-    selected_sql_preview_action: SqlPreviewAction,
-    selected_command_preview_action: CommandPreviewAction,
-    connection_source: Option<ConnectionSource>,
-    engine: Option<DatabaseEngine>,
-    catalog: Catalog,
-    selected_db_object: Option<DatabaseObject>,
-    preview: Option<GenerationPreview>,
-    process_result: Option<ProcessResult>,
-    config_file_path: Option<String>,
-    connection_config: Option<ConnectionConfig>,
-    generator_binary_state: GeneratorBinaryState,
-    process_result_scroll: u16,
-    last_message: String,
+pub(crate) struct ConnectionSourceScreenState {
+    pub(crate) selected_source: ConnectionSource,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EngineSelectScreenState {
+    pub(crate) selected_engine: EngineOption,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ObjectExplorerScreenState {
+    pub(crate) selected_object: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SoftDeleteScreenState {
+    pub(crate) selected_strategy: SoftDeleteStrategy,
+    pub(crate) selected_manual_field: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SqlPreviewScreenState {
+    pub(crate) selected_action: SqlPreviewAction,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CommandPreviewScreenState {
+    pub(crate) selected_action: CommandPreviewAction,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProcessResultScreenState {
+    pub(crate) scroll: u16,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AppState {
+    pub(crate) screen: Screen,
+    pub(crate) connection_source_screen: ConnectionSourceScreenState,
+    pub(crate) engine_select_screen: EngineSelectScreenState,
+    pub(crate) object_explorer_screen: ObjectExplorerScreenState,
+    pub(crate) soft_delete_screen: SoftDeleteScreenState,
+    pub(crate) sql_preview_screen: SqlPreviewScreenState,
+    pub(crate) command_preview_screen: CommandPreviewScreenState,
+    pub(crate) process_result_screen: ProcessResultScreenState,
+    pub(crate) connection_source: Option<ConnectionSource>,
+    pub(crate) engine: Option<DatabaseEngine>,
+    pub(crate) catalog: Catalog,
+    pub(crate) selected_db_object: Option<DatabaseObject>,
+    pub(crate) preview: Option<GenerationPreview>,
+    pub(crate) process_result: Option<ProcessResult>,
+    pub(crate) config_file_path: Option<String>,
+    pub(crate) connection_config: Option<ConnectionConfig>,
+    pub(crate) generator_binary_state: GeneratorBinaryState,
+    pub(crate) last_message: String,
 }
 
 pub struct TuiApp {
-    state: AppState,
+    pub(crate) state: AppState,
 }
 
 impl TuiApp {
@@ -211,13 +247,24 @@ impl TuiApp {
         Self {
             state: AppState {
                 screen: Screen::ConnectionSource,
-                selected_connection_source: ConnectionSource::Manual,
-                selected_engine: EngineOption::PostgreSql,
-                selected_object: 0,
-                selected_soft_delete_strategy: SoftDeleteStrategy::CreateDeletedAt,
-                selected_manual_field: 0,
-                selected_sql_preview_action: SqlPreviewAction::ExecuteAndContinue,
-                selected_command_preview_action: CommandPreviewAction::ExecuteCommand,
+                connection_source_screen: ConnectionSourceScreenState {
+                    selected_source: ConnectionSource::Manual,
+                },
+                engine_select_screen: EngineSelectScreenState {
+                    selected_engine: EngineOption::PostgreSql,
+                },
+                object_explorer_screen: ObjectExplorerScreenState { selected_object: 0 },
+                soft_delete_screen: SoftDeleteScreenState {
+                    selected_strategy: SoftDeleteStrategy::CreateDeletedAt,
+                    selected_manual_field: 0,
+                },
+                sql_preview_screen: SqlPreviewScreenState {
+                    selected_action: SqlPreviewAction::ExecuteAndContinue,
+                },
+                command_preview_screen: CommandPreviewScreenState {
+                    selected_action: CommandPreviewAction::ExecuteCommand,
+                },
+                process_result_screen: ProcessResultScreenState { scroll: 0 },
                 connection_source: None,
                 engine: None,
                 catalog: mock_catalog(DatabaseEngine::PostgreSql),
@@ -227,7 +274,6 @@ impl TuiApp {
                 config_file_path: None,
                 connection_config: None,
                 generator_binary_state: detect_generator_binary_state(),
-                process_result_scroll: 0,
                 last_message: initial_connection_message(),
             },
         }
@@ -358,7 +404,7 @@ impl TuiApp {
     fn activate_config_file_connection(&mut self, config: ConnectionConfig, path: String) {
         self.state.connection_config = Some(config.clone());
         self.state.engine = Some(config.engine);
-        self.state.selected_object = 0;
+        self.state.object_explorer_screen.selected_object = 0;
         self.state.preview = None;
         self.state.process_result = None;
         self.state.selected_db_object = None;
@@ -407,19 +453,19 @@ impl TuiApp {
     fn handle_connection_source(&mut self, code: KeyCode) {
         match code {
             KeyCode::Up => {
-                self.state.selected_connection_source =
-                    previous_connection_source(self.state.selected_connection_source);
+                self.state.connection_source_screen.selected_source =
+                    previous_connection_source(self.state.connection_source_screen.selected_source);
             }
             KeyCode::Down => {
-                self.state.selected_connection_source =
-                    next_connection_source(self.state.selected_connection_source);
+                self.state.connection_source_screen.selected_source =
+                    next_connection_source(self.state.connection_source_screen.selected_source);
             }
             KeyCode::Enter => {
                 if !self.ensure_generator_binary_ready() {
                     return;
                 }
 
-                match self.state.selected_connection_source {
+                match self.state.connection_source_screen.selected_source {
                     ConnectionSource::Manual => {
                         self.state.connection_source = Some(ConnectionSource::Manual);
                         self.state.connection_config = None;
@@ -444,17 +490,19 @@ impl TuiApp {
                     "Regresaste a la seleccion del origen de conexion.".to_string();
             }
             KeyCode::Up => {
-                self.state.selected_engine = previous_engine_option(self.state.selected_engine);
+                self.state.engine_select_screen.selected_engine =
+                    previous_engine_option(self.state.engine_select_screen.selected_engine);
             }
             KeyCode::Down => {
-                self.state.selected_engine = next_engine_option(self.state.selected_engine);
+                self.state.engine_select_screen.selected_engine =
+                    next_engine_option(self.state.engine_select_screen.selected_engine);
             }
             KeyCode::Enter => {
-                let engine = self.state.selected_engine.to_engine();
+                let engine = self.state.engine_select_screen.selected_engine.to_engine();
                 self.state.engine = Some(engine);
                 self.state.catalog = mock_catalog(engine);
                 self.state.connection_config = None;
-                self.state.selected_object = 0;
+                self.state.object_explorer_screen.selected_object = 0;
                 self.state.preview = None;
                 self.state.process_result = None;
                 self.state.screen = Screen::ObjectExplorer;
@@ -480,14 +528,20 @@ impl TuiApp {
                 self.state.last_message =
                     "Puedes cambiar de origen o motor sin perder control del flujo.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_object, total),
-            KeyCode::Down => select_next(&mut self.state.selected_object, total),
+            KeyCode::Up => select_previous(
+                &mut self.state.object_explorer_screen.selected_object,
+                total,
+            ),
+            KeyCode::Down => select_next(
+                &mut self.state.object_explorer_screen.selected_object,
+                total,
+            ),
             KeyCode::Enter => {
                 if let Some(object) = self
                     .state
                     .catalog
                     .objects
-                    .get(self.state.selected_object)
+                    .get(self.state.object_explorer_screen.selected_object)
                     .cloned()
                 {
                     self.state.selected_db_object = Some(object.clone());
@@ -530,13 +584,14 @@ impl TuiApp {
                             .to_string();
                 } else if self.needs_soft_delete_decision() {
                     self.state.screen = Screen::SoftDeleteStrategy;
-                    self.state.selected_soft_delete_strategy = SoftDeleteStrategy::CreateDeletedAt;
+                    self.state.soft_delete_screen.selected_strategy =
+                        SoftDeleteStrategy::CreateDeletedAt;
                     self.state.last_message =
                         "No existe deleted_at compatible. Decide como quieres resolver soft delete."
                             .to_string();
                 } else {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_command_preview_action =
+                    self.state.command_preview_screen.selected_action =
                         CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "La tabla ya tiene suficiente metadata para construir el comando."
@@ -555,26 +610,27 @@ impl TuiApp {
                     "Puedes revisar de nuevo la tabla antes de decidir.".to_string();
             }
             KeyCode::Up => {
-                self.state.selected_soft_delete_strategy =
-                    previous_soft_delete_strategy(self.state.selected_soft_delete_strategy);
+                self.state.soft_delete_screen.selected_strategy =
+                    previous_soft_delete_strategy(self.state.soft_delete_screen.selected_strategy);
             }
             KeyCode::Down => {
-                self.state.selected_soft_delete_strategy =
-                    next_soft_delete_strategy(self.state.selected_soft_delete_strategy);
+                self.state.soft_delete_screen.selected_strategy =
+                    next_soft_delete_strategy(self.state.soft_delete_screen.selected_strategy);
             }
-            KeyCode::Enter => match self.state.selected_soft_delete_strategy {
+            KeyCode::Enter => match self.state.soft_delete_screen.selected_strategy {
                 SoftDeleteStrategy::CreateDeletedAt => {
                     self.state.preview = self.load_preview_for_selected_table(
                         SoftDeletePreference::PreferDeleteEndpoint,
                         None,
                     );
                     self.state.screen = Screen::SqlPreview;
-                    self.state.selected_sql_preview_action = SqlPreviewAction::ExecuteAndContinue;
+                    self.state.sql_preview_screen.selected_action =
+                        SqlPreviewAction::ExecuteAndContinue;
                     self.state.last_message =
                         "Se genero el ALTER TABLE para revisar antes de continuar.".to_string();
                 }
                 SoftDeleteStrategy::UseExistingField => {
-                    self.state.selected_manual_field = 0;
+                    self.state.soft_delete_screen.selected_manual_field = 0;
                     self.state.screen = Screen::ManualSoftDeleteField;
                     self.state.last_message =
                         "Selecciona una columna datetime existente para soft delete.".to_string();
@@ -585,7 +641,7 @@ impl TuiApp {
                         None,
                     );
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_command_preview_action =
+                    self.state.command_preview_screen.selected_action =
                         CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "Seguimos sin endpoint delete para esta API.".to_string();
@@ -603,12 +659,18 @@ impl TuiApp {
                 self.state.last_message =
                     "Regresaste a las opciones para resolver soft delete.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_manual_field, total),
-            KeyCode::Down => select_next(&mut self.state.selected_manual_field, total),
+            KeyCode::Up => select_previous(
+                &mut self.state.soft_delete_screen.selected_manual_field,
+                total,
+            ),
+            KeyCode::Down => select_next(
+                &mut self.state.soft_delete_screen.selected_manual_field,
+                total,
+            ),
             KeyCode::Enter => {
                 if let Some(field) = self
                     .manual_soft_delete_candidates()
-                    .get(self.state.selected_manual_field)
+                    .get(self.state.soft_delete_screen.selected_manual_field)
                     .cloned()
                 {
                     self.state.preview = self.load_preview_for_selected_table(
@@ -616,7 +678,7 @@ impl TuiApp {
                         Some(field.as_str()),
                     );
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_command_preview_action =
+                    self.state.command_preview_screen.selected_action =
                         CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         format!("Usaremos `{}` como columna de soft delete.", field);
@@ -634,17 +696,17 @@ impl TuiApp {
                     "Puedes elegir otra estrategia antes de ejecutar nada.".to_string();
             }
             KeyCode::Up => {
-                self.state.selected_sql_preview_action =
-                    previous_sql_preview_action(self.state.selected_sql_preview_action);
+                self.state.sql_preview_screen.selected_action =
+                    previous_sql_preview_action(self.state.sql_preview_screen.selected_action);
             }
             KeyCode::Down => {
-                self.state.selected_sql_preview_action =
-                    next_sql_preview_action(self.state.selected_sql_preview_action);
+                self.state.sql_preview_screen.selected_action =
+                    next_sql_preview_action(self.state.sql_preview_screen.selected_action);
             }
-            KeyCode::Enter => match self.state.selected_sql_preview_action {
+            KeyCode::Enter => match self.state.sql_preview_screen.selected_action {
                 SqlPreviewAction::ExecuteAndContinue => {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_command_preview_action =
+                    self.state.command_preview_screen.selected_action =
                         CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "ALTER TABLE confirmado para este flujo. La metadata se considera refrescada."
@@ -652,7 +714,7 @@ impl TuiApp {
                 }
                 SqlPreviewAction::CopyAndContinue => {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_command_preview_action =
+                    self.state.command_preview_screen.selected_action =
                         CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "SQL marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
@@ -691,18 +753,19 @@ impl TuiApp {
                     "Puedes revisar el paso anterior antes de ejecutar.".to_string();
             }
             KeyCode::Up => {
-                self.state.selected_command_preview_action =
-                    previous_command_preview_action(self.state.selected_command_preview_action);
+                self.state.command_preview_screen.selected_action = previous_command_preview_action(
+                    self.state.command_preview_screen.selected_action,
+                );
             }
             KeyCode::Down => {
-                self.state.selected_command_preview_action =
-                    next_command_preview_action(self.state.selected_command_preview_action);
+                self.state.command_preview_screen.selected_action =
+                    next_command_preview_action(self.state.command_preview_screen.selected_action);
             }
-            KeyCode::Enter => match self.state.selected_command_preview_action {
+            KeyCode::Enter => match self.state.command_preview_screen.selected_action {
                 CommandPreviewAction::ExecuteCommand => match self.run_generated_command() {
                     Ok(result) => {
                         self.state.process_result = Some(result);
-                        self.state.process_result_scroll = 0;
+                        self.state.process_result_screen.scroll = 0;
                         self.state.screen = Screen::ProcessResult;
                         self.state.last_message =
                             "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
@@ -714,7 +777,7 @@ impl TuiApp {
                             stderr: error,
                             success: false,
                         });
-                        self.state.process_result_scroll = 0;
+                        self.state.process_result_screen.scroll = 0;
                         self.state.screen = Screen::ProcessResult;
                         self.state.last_message =
                             "La ejecucion del comando fallo antes de completar el proceso."
@@ -724,7 +787,7 @@ impl TuiApp {
                 CommandPreviewAction::CopyAndMarkExternalExecution => {
                     self.state.process_result =
                         Some(mock_external_process_result(self.state.preview.as_ref()));
-                    self.state.process_result_scroll = 0;
+                    self.state.process_result_screen.scroll = 0;
                     self.state.screen = Screen::ProcessResult;
                     self.state.last_message =
                         "Comando marcado como copiado para ejecucion externa.".to_string();
@@ -747,32 +810,34 @@ impl TuiApp {
         let total_lines = self.process_result_line_count() as u16;
         match code {
             KeyCode::Up => {
-                self.state.process_result_scroll =
-                    self.state.process_result_scroll.saturating_sub(1);
+                self.state.process_result_screen.scroll =
+                    self.state.process_result_screen.scroll.saturating_sub(1);
             }
             KeyCode::Down => {
-                self.state.process_result_scroll = self
+                self.state.process_result_screen.scroll = self
                     .state
-                    .process_result_scroll
+                    .process_result_screen
+                    .scroll
                     .saturating_add(1)
                     .min(total_lines.saturating_sub(1));
             }
             KeyCode::PageUp => {
-                self.state.process_result_scroll =
-                    self.state.process_result_scroll.saturating_sub(10);
+                self.state.process_result_screen.scroll =
+                    self.state.process_result_screen.scroll.saturating_sub(10);
             }
             KeyCode::PageDown => {
-                self.state.process_result_scroll = self
+                self.state.process_result_screen.scroll = self
                     .state
-                    .process_result_scroll
+                    .process_result_screen
+                    .scroll
                     .saturating_add(10)
                     .min(total_lines.saturating_sub(1));
             }
             KeyCode::Home => {
-                self.state.process_result_scroll = 0;
+                self.state.process_result_screen.scroll = 0;
             }
             KeyCode::End => {
-                self.state.process_result_scroll = total_lines.saturating_sub(1);
+                self.state.process_result_screen.scroll = total_lines.saturating_sub(1);
             }
             KeyCode::Esc | KeyCode::Enter => {
                 self.state.screen = Screen::ObjectExplorer;
@@ -806,330 +871,25 @@ impl TuiApp {
         frame.render_widget(title, areas[0]);
 
         match self.state.screen {
-            Screen::ConnectionSource => self.draw_connection_source(frame, areas[1]),
-            Screen::EngineSelect => self.draw_engine_select(frame, areas[1]),
-            Screen::ObjectExplorer => self.draw_object_explorer(frame, areas[1]),
-            Screen::ObjectDetails => self.draw_object_details(frame, areas[1]),
-            Screen::SoftDeleteStrategy => self.draw_soft_delete_strategy(frame, areas[1]),
-            Screen::ManualSoftDeleteField => self.draw_manual_soft_delete_field(frame, areas[1]),
-            Screen::SqlPreview => self.draw_sql_preview(frame, areas[1]),
-            Screen::CommandPreview => self.draw_command_preview(frame, areas[1]),
-            Screen::ProcessResult => self.draw_process_result(frame, areas[1]),
+            Screen::ConnectionSource => screens::connection_source::render(self, frame, areas[1]),
+            Screen::EngineSelect => screens::engine_select::render(self, frame, areas[1]),
+            Screen::ObjectExplorer => screens::object_explorer::render(self, frame, areas[1]),
+            Screen::ObjectDetails => screens::object_details::render(self, frame, areas[1]),
+            Screen::SoftDeleteStrategy => {
+                screens::soft_delete_strategy::render(self, frame, areas[1])
+            }
+            Screen::ManualSoftDeleteField => {
+                screens::manual_soft_delete_field::render(self, frame, areas[1])
+            }
+            Screen::SqlPreview => screens::sql_preview::render(self, frame, areas[1]),
+            Screen::CommandPreview => screens::command_preview::render(self, frame, areas[1]),
+            Screen::ProcessResult => screens::process_result::render(self, frame, areas[1]),
         }
 
         let footer = Paragraph::new(self.footer_text())
             .block(Block::default().borders(Borders::ALL).title("Ayuda"))
             .wrap(Wrap { trim: true });
         frame.render_widget(footer, areas[2]);
-    }
-
-    fn draw_connection_source(&self, frame: &mut Frame, area: Rect) {
-        let options = [ConnectionSource::Manual, ConnectionSource::ConfigFile];
-        let items = options
-            .iter()
-            .map(|source| ListItem::new(source.label()))
-            .collect::<Vec<_>>();
-
-        let helper_message = match self.state.config_file_path.as_deref() {
-            Some(path) => format!(
-                "{}\n\nRuta actual del archivo: {}",
-                self.state.last_message, path
-            ),
-            None => self.state.last_message.clone(),
-        };
-
-        draw_menu(
-            frame,
-            area,
-            "Origen de Conexion",
-            &items,
-            selected_index(ConnectionSource::ALL, self.state.selected_connection_source),
-            Some(helper_message.as_str()),
-        );
-    }
-
-    fn draw_engine_select(&self, frame: &mut Frame, area: Rect) {
-        let items = EngineOption::ALL
-            .iter()
-            .map(|option| ListItem::new(option.label()))
-            .collect::<Vec<_>>();
-        draw_menu(
-            frame,
-            area,
-            "Motor",
-            &items,
-            selected_index(EngineOption::ALL, self.state.selected_engine),
-            Some(self.state.last_message.as_str()),
-        );
-    }
-
-    fn draw_object_explorer(&self, frame: &mut Frame, area: Rect) {
-        let chunks = two_column_layout(area);
-        let items = self
-            .state
-            .catalog
-            .objects
-            .iter()
-            .map(|object| {
-                let schema = object.schema.as_deref().unwrap_or("<sin schema>");
-                ListItem::new(format!(
-                    "[{schema}] {} {}",
-                    object_type_label(object.object_type),
-                    object.name
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        render_selectable_list(
-            frame,
-            chunks[0],
-            "Objetos Disponibles",
-            &items,
-            self.state.selected_object,
-        );
-
-        let right_text = vec![
-            Line::from(match self.state.catalog.mode {
-                CatalogMode::Mock => "Conexion mock activa.",
-                CatalogMode::Real => "Conexion real activa.",
-            }),
-            Line::from(format!(
-                "Origen: {}",
-                self.state
-                    .connection_source
-                    .map(ConnectionSource::label)
-                    .unwrap_or("Pendiente")
-            )),
-            Line::from(format!(
-                "Motor: {}",
-                self.state
-                    .engine
-                    .map(|engine| engine.to_string())
-                    .unwrap_or_else(|| "pendiente".to_string())
-            )),
-            Line::from(""),
-            Line::from(match self.state.catalog.mode {
-                CatalogMode::Mock => {
-                    "Incluye tablas, funciones o stored procedures simulados.".to_string()
-                }
-                CatalogMode::Real => {
-                    "Los objetos vienen desde SQL Server usando el archivo de configuracion."
-                        .to_string()
-                }
-            }),
-            Line::from(self.state.last_message.clone()),
-        ];
-        let details = Paragraph::new(Text::from(right_text))
-            .block(Block::default().borders(Borders::ALL).title("Contexto"))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(details, chunks[1]);
-    }
-
-    fn draw_object_details(&self, frame: &mut Frame, area: Rect) {
-        let chunks = two_column_layout(area);
-        let Some(selected) = self.state.selected_db_object.as_ref() else {
-            return;
-        };
-
-        let left = if selected.object_type == DatabaseObjectType::Table {
-            let preview = self.state.preview.as_ref();
-            let mut lines = vec![Line::from(format!(
-                "Tabla: {}.{}",
-                selected.schema.as_deref().unwrap_or("<sin schema>"),
-                selected.name
-            ))];
-            lines.push(Line::from(""));
-            lines.push(Line::from("Columnas detectadas:"));
-
-            if let Some(preview) = preview {
-                for column in &preview.analyzed_schema.columns {
-                    let marker = if column.is_primary_key { "PK" } else { "  " };
-                    lines.push(Line::from(format!(
-                        "{marker} {}:{} ({})",
-                        column.name, column.normalized_type, column.db_type
-                    )));
-                }
-            } else {
-                lines.push(Line::from(
-                    "No fue posible cargar la estructura de la tabla.",
-                ));
-            }
-
-            Paragraph::new(Text::from(lines))
-                .block(Block::default().borders(Borders::ALL).title("Schema"))
-                .wrap(Wrap { trim: true })
-        } else {
-            Paragraph::new(Text::from(vec![
-                Line::from(format!(
-                    "{} seleccionado: {}",
-                    object_type_label(selected.object_type),
-                    selected.name
-                )),
-                Line::from(""),
-                Line::from("La generacion de API desde este tipo de objeto aun no esta soportada."),
-            ]))
-            .block(Block::default().borders(Borders::ALL).title("Metadata"))
-            .wrap(Wrap { trim: true })
-        };
-        frame.render_widget(left, chunks[0]);
-
-        let right_lines = if selected.object_type == DatabaseObjectType::Table {
-            vec![
-                Line::from("Siguiente paso:"),
-                Line::from("Presiona Enter para resolver soft delete y construir el comando."),
-                Line::from(""),
-                Line::from(self.state.last_message.clone()),
-            ]
-        } else {
-            vec![
-                Line::from("Objeto no generable en esta version."),
-                Line::from("Presiona Esc para volver al explorador."),
-                Line::from(""),
-                Line::from(self.state.last_message.clone()),
-            ]
-        };
-        let right = Paragraph::new(Text::from(right_lines))
-            .block(Block::default().borders(Borders::ALL).title("Accion"))
-            .wrap(Wrap { trim: true });
-        frame.render_widget(right, chunks[1]);
-    }
-
-    fn draw_soft_delete_strategy(&self, frame: &mut Frame, area: Rect) {
-        let items = [
-            SoftDeleteStrategy::CreateDeletedAt,
-            SoftDeleteStrategy::UseExistingField,
-            SoftDeleteStrategy::ContinueWithoutDelete,
-        ]
-        .iter()
-        .map(|strategy| ListItem::new(strategy.label()))
-        .collect::<Vec<_>>();
-
-        draw_menu(
-            frame,
-            area,
-            "Resolver Soft Delete",
-            &items,
-            selected_index(
-                SoftDeleteStrategy::ALL,
-                self.state.selected_soft_delete_strategy,
-            ),
-            Some(self.state.last_message.as_str()),
-        );
-    }
-
-    fn draw_manual_soft_delete_field(&self, frame: &mut Frame, area: Rect) {
-        let candidates = self.manual_soft_delete_candidates();
-        let items = candidates
-            .iter()
-            .map(|field| ListItem::new(field.clone()))
-            .collect::<Vec<_>>();
-        draw_menu(
-            frame,
-            area,
-            "Columnas Datetime Disponibles",
-            &items,
-            self.state.selected_manual_field,
-            Some("Estas columnas ya existen y pueden mapearse como delete_at."),
-        );
-    }
-
-    fn draw_sql_preview(&self, frame: &mut Frame, area: Rect) {
-        let chunks = two_column_layout(area);
-        let preview = self.state.preview.as_ref();
-        let sql = preview
-            .and_then(|item| item.generated_sql.as_ref())
-            .map(|item| item.sql.clone())
-            .unwrap_or_else(|| "No hay SQL generado.".to_string());
-
-        let sql_widget = Paragraph::new(sql)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Preview de ALTER TABLE"),
-            )
-            .wrap(Wrap { trim: true });
-        frame.render_widget(sql_widget, chunks[0]);
-
-        let actions = SqlPreviewAction::ALL
-            .iter()
-            .map(|action| ListItem::new(action.label()))
-            .collect::<Vec<_>>();
-        render_selectable_list(
-            frame,
-            chunks[1],
-            "Acciones",
-            &actions,
-            selected_index(
-                SqlPreviewAction::ALL,
-                self.state.selected_sql_preview_action,
-            ),
-        );
-    }
-
-    fn draw_command_preview(&self, frame: &mut Frame, area: Rect) {
-        let chunks = two_column_layout(area);
-        let preview = self.state.preview.as_ref();
-        let generator = self.generator_config_for_current_flow();
-        let command = preview
-            .map(|item| item.generated_command.raw_command.clone())
-            .unwrap_or_else(|| "No hay comando generado.".to_string());
-        let flags = if generator.flags.is_empty() {
-            "(sin flags)".to_string()
-        } else {
-            generator.flags.join(" ")
-        };
-
-        let lines = vec![
-            Line::from("Configuracion activa del generador:"),
-            Line::from(format!("cmd: {}", generator.cmd)),
-            Line::from(format!("flags: {}", flags)),
-            Line::from(""),
-            Line::from("Comando final:"),
-            Line::from(command),
-            Line::from(""),
-            Line::from(
-                preview
-                    .map(|item| format!("Soft delete: {}", item.soft_delete.summary()))
-                    .unwrap_or_else(|| "Soft delete no disponible".to_string()),
-            ),
-        ];
-        let command_widget = Paragraph::new(Text::from(lines))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Preview de Comando"),
-            )
-            .wrap(Wrap { trim: true });
-        frame.render_widget(command_widget, chunks[0]);
-
-        let actions = CommandPreviewAction::ALL
-            .iter()
-            .map(|action| ListItem::new(action.label()))
-            .collect::<Vec<_>>();
-        render_selectable_list(
-            frame,
-            chunks[1],
-            "Acciones",
-            &actions,
-            selected_index(
-                CommandPreviewAction::ALL,
-                self.state.selected_command_preview_action,
-            ),
-        );
-    }
-
-    fn draw_process_result(&self, frame: &mut Frame, area: Rect) {
-        let lines = self.build_process_result_lines();
-        let widget = Paragraph::new(Text::from(lines))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Resultado del Generador"),
-            )
-            .scroll((self.state.process_result_scroll, 0))
-            .wrap(Wrap { trim: false });
-        frame.render_widget(Clear, area);
-        frame.render_widget(widget, area);
     }
 
     fn footer_text(&self) -> String {
@@ -1216,7 +976,7 @@ impl TuiApp {
             .map_err(|error| error.to_string())
     }
 
-    fn manual_soft_delete_candidates(&self) -> Vec<String> {
+    pub(crate) fn manual_soft_delete_candidates(&self) -> Vec<String> {
         self.state
             .preview
             .as_ref()
@@ -1240,7 +1000,7 @@ impl TuiApp {
             .unwrap_or(false)
     }
 
-    fn generator_config_for_current_flow(&self) -> crate::domain::GeneratorConfig {
+    pub(crate) fn generator_config_for_current_flow(&self) -> crate::domain::GeneratorConfig {
         self.state
             .connection_config
             .as_ref()
@@ -1251,7 +1011,7 @@ impl TuiApp {
             })
     }
 
-    fn build_process_result_lines(&self) -> Vec<Line<'_>> {
+    pub(crate) fn build_process_result_lines(&self) -> Vec<Line<'_>> {
         let result = self.state.process_result.as_ref();
         let mut lines = vec![
             Line::from(format!(
@@ -1294,7 +1054,10 @@ impl TuiApp {
     }
 }
 
-fn selected_index<T: Copy + PartialEq, const N: usize>(options: [T; N], selected: T) -> usize {
+pub(crate) fn selected_index<T: Copy + PartialEq, const N: usize>(
+    options: [T; N],
+    selected: T,
+) -> usize {
     options
         .iter()
         .position(|option| *option == selected)
@@ -1430,7 +1193,7 @@ fn split_render_lines(content: &str) -> Vec<Line<'_>> {
 
     content.split('\n').map(Line::from).collect()
 }
-fn render_selectable_list(
+pub(crate) fn render_selectable_list(
     frame: &mut Frame,
     area: Rect,
     title: &str,
@@ -1454,7 +1217,7 @@ fn render_selectable_list(
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_menu(
+pub(crate) fn draw_menu(
     frame: &mut Frame,
     area: Rect,
     title: &str,
@@ -1512,7 +1275,7 @@ fn is_critical_helper_message(message: &str) -> bool {
         || lower.contains("error")
 }
 
-fn two_column_layout(area: Rect) -> [Rect; 2] {
+pub(crate) fn two_column_layout(area: Rect) -> [Rect; 2] {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -1538,7 +1301,7 @@ fn select_previous(selected: &mut usize, total: usize) {
     }
 }
 
-fn object_type_label(object_type: DatabaseObjectType) -> &'static str {
+pub(crate) fn object_type_label(object_type: DatabaseObjectType) -> &'static str {
     match object_type {
         DatabaseObjectType::Table => "table",
         DatabaseObjectType::Function => "function",

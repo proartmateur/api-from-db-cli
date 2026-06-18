@@ -1,0 +1,73 @@
+use ratatui::{
+    Frame,
+    layout::Rect,
+    text::{Line, Text},
+    widgets::{Block, Borders, ListItem, Paragraph, Wrap},
+};
+
+use crate::ui::tui::{
+    CatalogMode, ConnectionSource, TuiApp, object_type_label, render_selectable_list,
+    two_column_layout,
+};
+
+pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
+    let chunks = two_column_layout(area);
+    let items = app
+        .state
+        .catalog
+        .objects
+        .iter()
+        .map(|object| {
+            let schema = object.schema.as_deref().unwrap_or("<sin schema>");
+            ListItem::new(format!(
+                "[{schema}] {} {}",
+                object_type_label(object.object_type),
+                object.name
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    render_selectable_list(
+        frame,
+        chunks[0],
+        "Objetos Disponibles",
+        &items,
+        app.state.object_explorer_screen.selected_object,
+    );
+
+    let right_text = vec![
+        Line::from(match app.state.catalog.mode {
+            CatalogMode::Mock => "Conexion mock activa.",
+            CatalogMode::Real => "Conexion real activa.",
+        }),
+        Line::from(format!(
+            "Origen: {}",
+            app.state
+                .connection_source
+                .map(ConnectionSource::label)
+                .unwrap_or("Pendiente")
+        )),
+        Line::from(format!(
+            "Motor: {}",
+            app.state
+                .engine
+                .map(|engine| engine.to_string())
+                .unwrap_or_else(|| "pendiente".to_string())
+        )),
+        Line::from(""),
+        Line::from(match app.state.catalog.mode {
+            CatalogMode::Mock => {
+                "Incluye tablas, funciones o stored procedures simulados.".to_string()
+            }
+            CatalogMode::Real => {
+                "Los objetos vienen desde SQL Server usando el archivo de configuracion."
+                    .to_string()
+            }
+        }),
+        Line::from(app.state.last_message.clone()),
+    ];
+    let details = Paragraph::new(Text::from(right_text))
+        .block(Block::default().borders(Borders::ALL).title("Contexto"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(details, chunks[1]);
+}
