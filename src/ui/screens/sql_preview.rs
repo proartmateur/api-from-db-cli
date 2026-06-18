@@ -4,9 +4,8 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
 };
 
-use crate::ui::tui::{
-    SqlPreviewAction, TuiApp, render_selectable_list, selected_index, two_column_layout,
-};
+use crate::ui::state::SqlPreviewAction;
+use crate::ui::tui::{TuiApp, render_selectable_list, selected_index, two_column_layout};
 
 pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let chunks = two_column_layout(area);

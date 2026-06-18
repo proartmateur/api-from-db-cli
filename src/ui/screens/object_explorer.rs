@@ -5,10 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
 };
 
-use crate::ui::tui::{
-    CatalogMode, ConnectionSource, TuiApp, object_type_label, render_selectable_list,
-    two_column_layout,
-};
+use crate::ui::state::{CatalogMode, ConnectionSource};
+use crate::ui::tui::{TuiApp, object_type_label, render_selectable_list, two_column_layout};
 
 pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let chunks = two_column_layout(area);

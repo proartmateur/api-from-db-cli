@@ -1,6 +1,7 @@
 use ratatui::{Frame, layout::Rect, widgets::ListItem};
 
-use crate::ui::tui::{ConnectionSource, TuiApp, draw_menu, selected_index};
+use crate::ui::state::ConnectionSource;
+use crate::ui::tui::{TuiApp, draw_menu, selected_index};
 
 pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let items = ConnectionSource::ALL

@@ -1,6 +1,7 @@
 use ratatui::{Frame, layout::Rect, widgets::ListItem};
 
-use crate::ui::tui::{EngineOption, TuiApp, draw_menu, selected_index};
+use crate::ui::state::EngineOption;
+use crate::ui::tui::{TuiApp, draw_menu, selected_index};
 
 pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
     let items = EngineOption::ALL
