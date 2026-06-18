@@ -45,6 +45,8 @@ enum ConnectionSource {
 }
 
 impl ConnectionSource {
+    const ALL: [Self; 2] = [Self::Manual, Self::ConfigFile];
+
     fn label(self) -> &'static str {
         match self {
             Self::Manual => "Captura manual",
@@ -61,11 +63,93 @@ enum SoftDeleteStrategy {
 }
 
 impl SoftDeleteStrategy {
+    const ALL: [Self; 3] = [
+        Self::CreateDeletedAt,
+        Self::UseExistingField,
+        Self::ContinueWithoutDelete,
+    ];
+
     fn label(self) -> &'static str {
         match self {
             Self::CreateDeletedAt => "Crear campo deleted_at",
             Self::UseExistingField => "Usar columna existente",
             Self::ContinueWithoutDelete => "Continuar sin endpoint delete",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineOption {
+    PostgreSql,
+    SqlServer,
+}
+
+impl EngineOption {
+    const ALL: [Self; 2] = [Self::PostgreSql, Self::SqlServer];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::PostgreSql => "PostgreSQL",
+            Self::SqlServer => "SQL Server",
+        }
+    }
+
+    fn to_engine(self) -> DatabaseEngine {
+        match self {
+            Self::PostgreSql => DatabaseEngine::PostgreSql,
+            Self::SqlServer => DatabaseEngine::SqlServer,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SqlPreviewAction {
+    ExecuteAndContinue,
+    CopyAndContinue,
+    CopyAndStay,
+    Cancel,
+}
+
+impl SqlPreviewAction {
+    const ALL: [Self; 4] = [
+        Self::ExecuteAndContinue,
+        Self::CopyAndContinue,
+        Self::CopyAndStay,
+        Self::Cancel,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::ExecuteAndContinue => "Ejecutar ALTER TABLE y continuar",
+            Self::CopyAndContinue => "Copiar SQL y continuar al comando",
+            Self::CopyAndStay => "Copiar SQL y quedarse aqui",
+            Self::Cancel => "Cancelar",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPreviewAction {
+    ExecuteCommand,
+    CopyAndMarkExternalExecution,
+    CopyAndStay,
+    Cancel,
+}
+
+impl CommandPreviewAction {
+    const ALL: [Self; 4] = [
+        Self::ExecuteCommand,
+        Self::CopyAndMarkExternalExecution,
+        Self::CopyAndStay,
+        Self::Cancel,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::ExecuteCommand => "Ejecutar comando",
+            Self::CopyAndMarkExternalExecution => "Copiar comando y marcar ejecucion externa",
+            Self::CopyAndStay => "Copiar comando y quedarse aqui",
+            Self::Cancel => "Cancelar",
         }
     }
 }
@@ -98,12 +182,13 @@ struct Catalog {
 #[derive(Debug, Clone)]
 struct AppState {
     screen: Screen,
-    selected_connection_source: usize,
-    selected_engine: usize,
+    selected_connection_source: ConnectionSource,
+    selected_engine: EngineOption,
     selected_object: usize,
-    selected_soft_delete_strategy: usize,
+    selected_soft_delete_strategy: SoftDeleteStrategy,
     selected_manual_field: usize,
-    selected_action: usize,
+    selected_sql_preview_action: SqlPreviewAction,
+    selected_command_preview_action: CommandPreviewAction,
     connection_source: Option<ConnectionSource>,
     engine: Option<DatabaseEngine>,
     catalog: Catalog,
@@ -126,12 +211,13 @@ impl TuiApp {
         Self {
             state: AppState {
                 screen: Screen::ConnectionSource,
-                selected_connection_source: 0,
-                selected_engine: 0,
+                selected_connection_source: ConnectionSource::Manual,
+                selected_engine: EngineOption::PostgreSql,
                 selected_object: 0,
-                selected_soft_delete_strategy: 0,
+                selected_soft_delete_strategy: SoftDeleteStrategy::CreateDeletedAt,
                 selected_manual_field: 0,
-                selected_action: 0,
+                selected_sql_preview_action: SqlPreviewAction::ExecuteAndContinue,
+                selected_command_preview_action: CommandPreviewAction::ExecuteCommand,
                 connection_source: None,
                 engine: None,
                 catalog: mock_catalog(DatabaseEngine::PostgreSql),
@@ -319,17 +405,22 @@ impl TuiApp {
     }
 
     fn handle_connection_source(&mut self, code: KeyCode) {
-        let total = 2;
         match code {
-            KeyCode::Up => select_previous(&mut self.state.selected_connection_source, total),
-            KeyCode::Down => select_next(&mut self.state.selected_connection_source, total),
+            KeyCode::Up => {
+                self.state.selected_connection_source =
+                    previous_connection_source(self.state.selected_connection_source);
+            }
+            KeyCode::Down => {
+                self.state.selected_connection_source =
+                    next_connection_source(self.state.selected_connection_source);
+            }
             KeyCode::Enter => {
                 if !self.ensure_generator_binary_ready() {
                     return;
                 }
 
                 match self.state.selected_connection_source {
-                    0 => {
+                    ConnectionSource::Manual => {
                         self.state.connection_source = Some(ConnectionSource::Manual);
                         self.state.connection_config = None;
                         self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
@@ -338,7 +429,7 @@ impl TuiApp {
                             "Generador validado. Conexion mock preparada. Ahora elige el motor de base de datos."
                                 .to_string();
                     }
-                    _ => self.handle_config_file_selection(),
+                    ConnectionSource::ConfigFile => self.handle_config_file_selection(),
                 }
             }
             _ => {}
@@ -346,20 +437,20 @@ impl TuiApp {
     }
 
     fn handle_engine_select(&mut self, code: KeyCode) {
-        let total = 2;
         match code {
             KeyCode::Esc => {
                 self.state.screen = Screen::ConnectionSource;
                 self.state.last_message =
                     "Regresaste a la seleccion del origen de conexion.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_engine, total),
-            KeyCode::Down => select_next(&mut self.state.selected_engine, total),
+            KeyCode::Up => {
+                self.state.selected_engine = previous_engine_option(self.state.selected_engine);
+            }
+            KeyCode::Down => {
+                self.state.selected_engine = next_engine_option(self.state.selected_engine);
+            }
             KeyCode::Enter => {
-                let engine = match self.state.selected_engine {
-                    0 => DatabaseEngine::PostgreSql,
-                    _ => DatabaseEngine::SqlServer,
-                };
+                let engine = self.state.selected_engine.to_engine();
                 self.state.engine = Some(engine);
                 self.state.catalog = mock_catalog(engine);
                 self.state.connection_config = None;
@@ -439,13 +530,14 @@ impl TuiApp {
                             .to_string();
                 } else if self.needs_soft_delete_decision() {
                     self.state.screen = Screen::SoftDeleteStrategy;
-                    self.state.selected_soft_delete_strategy = 0;
+                    self.state.selected_soft_delete_strategy = SoftDeleteStrategy::CreateDeletedAt;
                     self.state.last_message =
                         "No existe deleted_at compatible. Decide como quieres resolver soft delete."
                             .to_string();
                 } else {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_command_preview_action =
+                        CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "La tabla ya tiene suficiente metadata para construir el comando."
                             .to_string();
@@ -456,23 +548,28 @@ impl TuiApp {
     }
 
     fn handle_soft_delete_strategy(&mut self, code: KeyCode) {
-        let total = 3;
         match code {
             KeyCode::Esc => {
                 self.state.screen = Screen::ObjectDetails;
                 self.state.last_message =
                     "Puedes revisar de nuevo la tabla antes de decidir.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_soft_delete_strategy, total),
-            KeyCode::Down => select_next(&mut self.state.selected_soft_delete_strategy, total),
-            KeyCode::Enter => match self.selected_strategy() {
+            KeyCode::Up => {
+                self.state.selected_soft_delete_strategy =
+                    previous_soft_delete_strategy(self.state.selected_soft_delete_strategy);
+            }
+            KeyCode::Down => {
+                self.state.selected_soft_delete_strategy =
+                    next_soft_delete_strategy(self.state.selected_soft_delete_strategy);
+            }
+            KeyCode::Enter => match self.state.selected_soft_delete_strategy {
                 SoftDeleteStrategy::CreateDeletedAt => {
                     self.state.preview = self.load_preview_for_selected_table(
                         SoftDeletePreference::PreferDeleteEndpoint,
                         None,
                     );
                     self.state.screen = Screen::SqlPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_sql_preview_action = SqlPreviewAction::ExecuteAndContinue;
                     self.state.last_message =
                         "Se genero el ALTER TABLE para revisar antes de continuar.".to_string();
                 }
@@ -488,7 +585,8 @@ impl TuiApp {
                         None,
                     );
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_command_preview_action =
+                        CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "Seguimos sin endpoint delete para esta API.".to_string();
                 }
@@ -518,7 +616,8 @@ impl TuiApp {
                         Some(field.as_str()),
                     );
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_command_preview_action =
+                        CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         format!("Usaremos `{}` como columna de soft delete.", field);
                 }
@@ -528,36 +627,43 @@ impl TuiApp {
     }
 
     fn handle_sql_preview(&mut self, code: KeyCode) {
-        let total = 4;
         match code {
             KeyCode::Esc => {
                 self.state.screen = Screen::SoftDeleteStrategy;
                 self.state.last_message =
                     "Puedes elegir otra estrategia antes de ejecutar nada.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_action, total),
-            KeyCode::Down => select_next(&mut self.state.selected_action, total),
-            KeyCode::Enter => match self.state.selected_action {
-                0 => {
+            KeyCode::Up => {
+                self.state.selected_sql_preview_action =
+                    previous_sql_preview_action(self.state.selected_sql_preview_action);
+            }
+            KeyCode::Down => {
+                self.state.selected_sql_preview_action =
+                    next_sql_preview_action(self.state.selected_sql_preview_action);
+            }
+            KeyCode::Enter => match self.state.selected_sql_preview_action {
+                SqlPreviewAction::ExecuteAndContinue => {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_command_preview_action =
+                        CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "ALTER TABLE confirmado para este flujo. La metadata se considera refrescada."
                             .to_string();
                 }
-                1 => {
+                SqlPreviewAction::CopyAndContinue => {
                     self.state.screen = Screen::CommandPreview;
-                    self.state.selected_action = 0;
+                    self.state.selected_command_preview_action =
+                        CommandPreviewAction::ExecuteCommand;
                     self.state.last_message =
                         "SQL marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
                             .to_string();
                 }
-                2 => {
+                SqlPreviewAction::CopyAndStay => {
                     self.state.last_message =
                         "SQL marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
                             .to_string();
                 }
-                _ => {
+                SqlPreviewAction::Cancel => {
                     self.state.screen = Screen::SoftDeleteStrategy;
                     self.state.last_message =
                         "Operacion cancelada. La base sigue intacta.".to_string();
@@ -568,7 +674,6 @@ impl TuiApp {
     }
 
     fn handle_command_preview(&mut self, code: KeyCode) {
-        let total = 4;
         match code {
             KeyCode::Esc => {
                 self.state.screen = if self
@@ -585,12 +690,19 @@ impl TuiApp {
                 self.state.last_message =
                     "Puedes revisar el paso anterior antes de ejecutar.".to_string();
             }
-            KeyCode::Up => select_previous(&mut self.state.selected_action, total),
-            KeyCode::Down => select_next(&mut self.state.selected_action, total),
-            KeyCode::Enter => match self.state.selected_action {
-                0 => match self.run_generated_command() {
+            KeyCode::Up => {
+                self.state.selected_command_preview_action =
+                    previous_command_preview_action(self.state.selected_command_preview_action);
+            }
+            KeyCode::Down => {
+                self.state.selected_command_preview_action =
+                    next_command_preview_action(self.state.selected_command_preview_action);
+            }
+            KeyCode::Enter => match self.state.selected_command_preview_action {
+                CommandPreviewAction::ExecuteCommand => match self.run_generated_command() {
                     Ok(result) => {
                         self.state.process_result = Some(result);
+                        self.state.process_result_scroll = 0;
                         self.state.screen = Screen::ProcessResult;
                         self.state.last_message =
                             "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
@@ -602,13 +714,14 @@ impl TuiApp {
                             stderr: error,
                             success: false,
                         });
+                        self.state.process_result_scroll = 0;
                         self.state.screen = Screen::ProcessResult;
                         self.state.last_message =
                             "La ejecucion del comando fallo antes de completar el proceso."
                                 .to_string();
                     }
                 },
-                1 => {
+                CommandPreviewAction::CopyAndMarkExternalExecution => {
                     self.state.process_result =
                         Some(mock_external_process_result(self.state.preview.as_ref()));
                     self.state.process_result_scroll = 0;
@@ -616,11 +729,11 @@ impl TuiApp {
                     self.state.last_message =
                         "Comando marcado como copiado para ejecucion externa.".to_string();
                 }
-                2 => {
+                CommandPreviewAction::CopyAndStay => {
                     self.state.last_message =
                         "Comando marcado como copiado al portapapeles virtual.".to_string();
                 }
-                _ => {
+                CommandPreviewAction::Cancel => {
                     self.state.screen = Screen::ObjectExplorer;
                     self.state.last_message =
                         "Ejecucion cancelada. Regresaste al explorador de objetos.".to_string();
@@ -730,19 +843,22 @@ impl TuiApp {
             area,
             "Origen de Conexion",
             &items,
-            self.state.selected_connection_source,
+            selected_index(ConnectionSource::ALL, self.state.selected_connection_source),
             Some(helper_message.as_str()),
         );
     }
 
     fn draw_engine_select(&self, frame: &mut Frame, area: Rect) {
-        let items = vec![ListItem::new("PostgreSQL"), ListItem::new("SQL Server")];
+        let items = EngineOption::ALL
+            .iter()
+            .map(|option| ListItem::new(option.label()))
+            .collect::<Vec<_>>();
         draw_menu(
             frame,
             area,
             "Motor",
             &items,
-            self.state.selected_engine,
+            selected_index(EngineOption::ALL, self.state.selected_engine),
             Some(self.state.last_message.as_str()),
         );
     }
@@ -893,7 +1009,10 @@ impl TuiApp {
             area,
             "Resolver Soft Delete",
             &items,
-            self.state.selected_soft_delete_strategy,
+            selected_index(
+                SoftDeleteStrategy::ALL,
+                self.state.selected_soft_delete_strategy,
+            ),
             Some(self.state.last_message.as_str()),
         );
     }
@@ -931,18 +1050,19 @@ impl TuiApp {
             .wrap(Wrap { trim: true });
         frame.render_widget(sql_widget, chunks[0]);
 
-        let actions = vec![
-            ListItem::new("Ejecutar ALTER TABLE y continuar"),
-            ListItem::new("Copiar SQL y continuar al comando"),
-            ListItem::new("Copiar SQL y quedarse aqui"),
-            ListItem::new("Cancelar"),
-        ];
+        let actions = SqlPreviewAction::ALL
+            .iter()
+            .map(|action| ListItem::new(action.label()))
+            .collect::<Vec<_>>();
         render_selectable_list(
             frame,
             chunks[1],
             "Acciones",
             &actions,
-            self.state.selected_action,
+            selected_index(
+                SqlPreviewAction::ALL,
+                self.state.selected_sql_preview_action,
+            ),
         );
     }
 
@@ -982,18 +1102,19 @@ impl TuiApp {
             .wrap(Wrap { trim: true });
         frame.render_widget(command_widget, chunks[0]);
 
-        let actions = vec![
-            ListItem::new("Ejecutar comando"),
-            ListItem::new("Copiar comando y marcar ejecucion externa"),
-            ListItem::new("Copiar comando y quedarse aqui"),
-            ListItem::new("Cancelar"),
-        ];
+        let actions = CommandPreviewAction::ALL
+            .iter()
+            .map(|action| ListItem::new(action.label()))
+            .collect::<Vec<_>>();
         render_selectable_list(
             frame,
             chunks[1],
             "Acciones",
             &actions,
-            self.state.selected_action,
+            selected_index(
+                CommandPreviewAction::ALL,
+                self.state.selected_command_preview_action,
+            ),
         );
     }
 
@@ -1022,14 +1143,6 @@ impl TuiApp {
             parts.push(self.state.last_message.as_str());
         }
         parts.join("  |  ")
-    }
-
-    fn selected_strategy(&self) -> SoftDeleteStrategy {
-        match self.state.selected_soft_delete_strategy {
-            0 => SoftDeleteStrategy::CreateDeletedAt,
-            1 => SoftDeleteStrategy::UseExistingField,
-            _ => SoftDeleteStrategy::ContinueWithoutDelete,
-        }
     }
 
     fn load_preview_for_selected_table(
@@ -1178,6 +1291,87 @@ impl TuiApp {
         runner
             .run(&preview.generated_command)
             .map_err(|error| error.to_string())
+    }
+}
+
+fn selected_index<T: Copy + PartialEq, const N: usize>(options: [T; N], selected: T) -> usize {
+    options
+        .iter()
+        .position(|option| *option == selected)
+        .unwrap_or(0)
+}
+
+fn next_connection_source(selected: ConnectionSource) -> ConnectionSource {
+    match selected {
+        ConnectionSource::Manual => ConnectionSource::ConfigFile,
+        ConnectionSource::ConfigFile => ConnectionSource::Manual,
+    }
+}
+
+fn previous_connection_source(selected: ConnectionSource) -> ConnectionSource {
+    next_connection_source(selected)
+}
+
+fn next_engine_option(selected: EngineOption) -> EngineOption {
+    match selected {
+        EngineOption::PostgreSql => EngineOption::SqlServer,
+        EngineOption::SqlServer => EngineOption::PostgreSql,
+    }
+}
+
+fn previous_engine_option(selected: EngineOption) -> EngineOption {
+    next_engine_option(selected)
+}
+
+fn next_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
+    match selected {
+        SoftDeleteStrategy::CreateDeletedAt => SoftDeleteStrategy::UseExistingField,
+        SoftDeleteStrategy::UseExistingField => SoftDeleteStrategy::ContinueWithoutDelete,
+        SoftDeleteStrategy::ContinueWithoutDelete => SoftDeleteStrategy::CreateDeletedAt,
+    }
+}
+
+fn previous_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
+    match selected {
+        SoftDeleteStrategy::CreateDeletedAt => SoftDeleteStrategy::ContinueWithoutDelete,
+        SoftDeleteStrategy::UseExistingField => SoftDeleteStrategy::CreateDeletedAt,
+        SoftDeleteStrategy::ContinueWithoutDelete => SoftDeleteStrategy::UseExistingField,
+    }
+}
+
+fn next_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
+    match selected {
+        SqlPreviewAction::ExecuteAndContinue => SqlPreviewAction::CopyAndContinue,
+        SqlPreviewAction::CopyAndContinue => SqlPreviewAction::CopyAndStay,
+        SqlPreviewAction::CopyAndStay => SqlPreviewAction::Cancel,
+        SqlPreviewAction::Cancel => SqlPreviewAction::ExecuteAndContinue,
+    }
+}
+
+fn previous_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
+    match selected {
+        SqlPreviewAction::ExecuteAndContinue => SqlPreviewAction::Cancel,
+        SqlPreviewAction::CopyAndContinue => SqlPreviewAction::ExecuteAndContinue,
+        SqlPreviewAction::CopyAndStay => SqlPreviewAction::CopyAndContinue,
+        SqlPreviewAction::Cancel => SqlPreviewAction::CopyAndStay,
+    }
+}
+
+fn next_command_preview_action(selected: CommandPreviewAction) -> CommandPreviewAction {
+    match selected {
+        CommandPreviewAction::ExecuteCommand => CommandPreviewAction::CopyAndMarkExternalExecution,
+        CommandPreviewAction::CopyAndMarkExternalExecution => CommandPreviewAction::CopyAndStay,
+        CommandPreviewAction::CopyAndStay => CommandPreviewAction::Cancel,
+        CommandPreviewAction::Cancel => CommandPreviewAction::ExecuteCommand,
+    }
+}
+
+fn previous_command_preview_action(selected: CommandPreviewAction) -> CommandPreviewAction {
+    match selected {
+        CommandPreviewAction::ExecuteCommand => CommandPreviewAction::Cancel,
+        CommandPreviewAction::CopyAndMarkExternalExecution => CommandPreviewAction::ExecuteCommand,
+        CommandPreviewAction::CopyAndStay => CommandPreviewAction::CopyAndMarkExternalExecution,
+        CommandPreviewAction::Cancel => CommandPreviewAction::CopyAndStay,
     }
 }
 
