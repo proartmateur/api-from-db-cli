@@ -1,4 +1,3 @@
-use std::env;
 use std::io::{self, Stdout};
 use std::time::Duration;
 
@@ -14,24 +13,24 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::adapters::config::ConfigLoader;
 use crate::adapters::process::StdProcessRunner;
 use crate::adapters::sqlserver::SqlServerAdapter;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
-use crate::core::ports::{ConnectionProvider, MetadataExplorer, ProcessRunner};
+use crate::core::ports::{MetadataExplorer, ProcessRunner};
 use crate::domain::{
-    ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType, ProcessResult,
-    SoftDeletePreference, TableSchema,
+    DatabaseEngine, DatabaseObject, DatabaseObjectType, ProcessResult, SoftDeletePreference,
+    TableSchema,
 };
 use crate::ui::handlers;
 use crate::ui::mocks::catalog_fn;
 use crate::ui::screens;
 use crate::ui::state::{
-    AppState, Catalog, CatalogMode, CommandPreviewAction, CommandPreviewScreenState,
-    ConnectionSource, ConnectionSourceScreenState, EngineOption, EngineSelectScreenState,
-    GeneratorBinaryState, ObjectExplorerScreenState, ProcessResultScreenState, Screen,
-    SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction, SqlPreviewScreenState,
+    AppState, CatalogMode, CommandPreviewAction, CommandPreviewScreenState, ConnectionSource,
+    ConnectionSourceScreenState, EngineOption, EngineSelectScreenState, ObjectExplorerScreenState,
+    ProcessResultScreenState, Screen, SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction,
+    SqlPreviewScreenState,
 };
+use crate::ui::use_cases::{config_file_connection, generator_validation};
 
 pub struct TuiApp {
     pub(crate) state: AppState,
@@ -68,8 +67,8 @@ impl TuiApp {
                 process_result: None,
                 config_file_path: None,
                 connection_config: None,
-                generator_binary_state: detect_generator_binary_state(),
-                last_message: initial_connection_message(),
+                generator_binary_state: generator_validation::validate().state,
+                last_message: generator_validation::initial_message(),
             },
         }
     }
@@ -123,124 +122,44 @@ impl TuiApp {
         }
     }
 
-    fn refresh_generator_binary_state(&mut self) {
-        self.state.generator_binary_state = detect_generator_binary_state();
-    }
-
     pub(crate) fn ensure_generator_binary_ready(&mut self) -> bool {
-        self.refresh_generator_binary_state();
-
-        match &self.state.generator_binary_state {
-            GeneratorBinaryState::Available { path } => {
-                self.state.last_message = format!(
-                    "Generador detectado en `{}`. Ya puedes continuar.",
-                    path.display()
-                );
-                true
-            }
-            GeneratorBinaryState::Missing { searched_paths } => {
-                let searched = searched_paths
-                    .iter()
-                    .map(|path| path.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(" o ");
-                self.state.last_message = format!(
-                    "No se encontro `gen` ni `gen.exe` en la raiz del proyecto. Colocalo en {} y presiona Enter para reintentar.",
-                    searched
-                );
-                false
-            }
-            GeneratorBinaryState::Error(error) => {
-                self.state.last_message = format!(
-                    "No fue posible validar el generador en la raiz del proyecto: {}",
-                    error
-                );
-                false
-            }
-        }
+        let outcome = generator_validation::validate();
+        self.state.generator_binary_state = outcome.state;
+        self.state.last_message = outcome.message;
+        outcome.is_ready
     }
 
     pub(crate) fn handle_config_file_selection(&mut self) {
-        let loader = ConfigLoader;
+        use config_file_connection::ConfigFileConnectionOutcome;
+
         self.state.connection_source = Some(ConnectionSource::ConfigFile);
 
-        match loader.ensure_default_file(None) {
-            Ok(result) if result.created => {
-                let path = result.path.display().to_string();
-                self.state.config_file_path = Some(path.clone());
-                self.state.last_message = format!(
-                    "Se genero `{}`. Editalo manualmente y presiona Enter otra vez para cargarlo.",
-                    path
-                );
+        match config_file_connection::load_or_create() {
+            ConfigFileConnectionOutcome::CreatedTemplate { path, message } => {
+                self.state.config_file_path = Some(path);
+                self.state.last_message = message;
             }
-            Ok(result) => {
-                let path = result.path.display().to_string();
-                self.state.config_file_path = Some(path.clone());
-
-                match loader.load_from_json_file(result.path.as_path()) {
-                    Ok(config) => self.activate_config_file_connection(config, path),
-                    Err(error) => {
-                        self.state.last_message = format!(
-                            "No se pudo cargar `{}`: {}. Edita el archivo y presiona Enter otra vez.",
-                            path, error
-                        );
-                    }
-                }
-            }
-            Err(error) => {
-                self.state.last_message = format!(
-                    "No fue posible preparar el archivo de configuracion: {}",
-                    error
-                );
-            }
-        }
-    }
-
-    fn activate_config_file_connection(&mut self, config: ConnectionConfig, path: String) {
-        self.state.connection_config = Some(config.clone());
-        self.state.engine = Some(config.engine);
-        self.state.object_explorer_screen.selected_object = 0;
-        self.state.preview = None;
-        self.state.process_result = None;
-        self.state.selected_db_object = None;
-
-        match config.engine {
-            DatabaseEngine::SqlServer => {
-                let adapter = SqlServerAdapter;
-                match adapter.test_connection(&config) {
-                    Ok(()) => match adapter.list_objects(&config) {
-                        Ok(objects) => {
-                            self.state.catalog = Catalog {
-                                objects,
-                                tables: Vec::new(),
-                                mode: CatalogMode::Real,
-                            };
-                            self.state.screen = Screen::ObjectExplorer;
-                            self.state.last_message = format!(
-                                "Configuracion cargada desde `{}`. Conexion real a SQL Server establecida.",
-                                path
-                            );
-                        }
-                        Err(error) => {
-                            self.state.last_message = format!(
-                                "La conexion a SQL Server funciono, pero no se pudieron listar objetos: {}",
-                                error
-                            );
-                        }
-                    },
-                    Err(error) => {
-                        self.state.last_message =
-                            format!("No se pudo conectar a SQL Server con `{}`: {}", path, error);
-                    }
-                }
-            }
-            DatabaseEngine::PostgreSql => {
-                self.state.catalog = catalog_fn(DatabaseEngine::PostgreSql);
+            ConfigFileConnectionOutcome::Loaded {
+                path,
+                config,
+                engine,
+                catalog,
+                message,
+            } => {
+                self.state.config_file_path = Some(path);
+                self.state.connection_config = Some(config);
+                self.state.engine = Some(engine);
+                self.state.catalog = catalog;
+                self.state.object_explorer_screen.selected_object = 0;
+                self.state.preview = None;
+                self.state.process_result = None;
+                self.state.selected_db_object = None;
                 self.state.screen = Screen::ObjectExplorer;
-                self.state.last_message = format!(
-                    "Configuracion cargada desde `{}`. PostgreSQL aun usa catalogo mock mientras conectamos su adapter real.",
-                    path
-                );
+                self.state.last_message = message;
+            }
+            ConfigFileConnectionOutcome::Error { path, message } => {
+                self.state.config_file_path = path;
+                self.state.last_message = message;
             }
         }
     }
@@ -459,48 +378,6 @@ pub(crate) fn selected_index<T: Copy + PartialEq, const N: usize>(
         .iter()
         .position(|option| *option == selected)
         .unwrap_or(0)
-}
-
-fn initial_connection_message() -> String {
-    match detect_generator_binary_state() {
-        GeneratorBinaryState::Available { path } => format!(
-            "Se encontro el generador en `{}`. Selecciona como quieres cargar la conexion.",
-            path.display()
-        ),
-        GeneratorBinaryState::Missing { searched_paths } => format!(
-            "No se encontro `gen` ni `gen.exe` en la raiz del proyecto. Colocalo en {} y presiona Enter para reintentar.",
-            searched_paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(" o ")
-        ),
-        GeneratorBinaryState::Error(error) => format!(
-            "No fue posible validar el generador en la raiz del proyecto: {}",
-            error
-        ),
-    }
-}
-
-fn detect_generator_binary_state() -> GeneratorBinaryState {
-    let current_dir = match env::current_dir() {
-        Ok(path) => path,
-        Err(error) => return GeneratorBinaryState::Error(error.to_string()),
-    };
-
-    let candidates = [current_dir.join("gen"), current_dir.join("gen.exe")];
-
-    for candidate in &candidates {
-        if candidate.is_file() {
-            return GeneratorBinaryState::Available {
-                path: candidate.clone(),
-            };
-        }
-    }
-
-    GeneratorBinaryState::Missing {
-        searched_paths: candidates.into_iter().collect(),
-    }
 }
 
 fn restore_terminal(mut terminal: Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {

@@ -4,3 +4,4 @@ pub mod navigation;
 pub mod screens;
 pub mod state;
 pub mod tui;
+pub mod use_cases;
