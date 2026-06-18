@@ -13,24 +13,20 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 
-use crate::adapters::process::StdProcessRunner;
-use crate::adapters::sqlserver::SqlServerAdapter;
-use crate::app::generation_service::{GenerationPreview, GenerationService};
-use crate::core::ports::{MetadataExplorer, ProcessRunner};
-use crate::domain::{
-    DatabaseEngine, DatabaseObject, DatabaseObjectType, ProcessResult, SoftDeletePreference,
-    TableSchema,
-};
+use crate::app::generation_service::GenerationPreview;
+use crate::domain::{DatabaseEngine, DatabaseObjectType, ProcessResult, SoftDeletePreference};
 use crate::ui::handlers;
 use crate::ui::mocks::catalog_fn;
 use crate::ui::screens;
 use crate::ui::state::{
-    AppState, CatalogMode, CommandPreviewAction, CommandPreviewScreenState, ConnectionSource,
+    AppState, CommandPreviewAction, CommandPreviewScreenState, ConnectionSource,
     ConnectionSourceScreenState, EngineOption, EngineSelectScreenState, ObjectExplorerScreenState,
     ProcessResultScreenState, Screen, SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction,
     SqlPreviewScreenState,
 };
-use crate::ui::use_cases::{config_file_connection, generator_validation};
+use crate::ui::use_cases::{
+    config_file_connection, generator_command, generator_validation, table_preview,
+};
 
 pub struct TuiApp {
     pub(crate) state: AppState,
@@ -229,67 +225,23 @@ impl TuiApp {
         let selected = self.state.selected_db_object.as_ref()?.clone();
         let engine = self.state.engine?;
 
-        let schema = match self.state.catalog.mode {
-            CatalogMode::Mock => self.mock_table_schema(&selected),
-            CatalogMode::Real => self.real_table_schema(&selected),
-        };
-
-        match schema {
-            Ok(schema) => {
-                Some(self.preview_from_schema(schema, preference, manually_selected_field))
-            }
-            Err(error) => {
-                self.state.last_message = format!(
-                    "No fue posible leer la estructura de {}.{}: {}",
-                    selected.schema.as_deref().unwrap_or("<sin schema>"),
-                    selected.name,
-                    error
-                );
+        match table_preview::load(table_preview::LoadTablePreviewInput {
+            selected: &selected,
+            engine,
+            catalog_mode: self.state.catalog.mode,
+            catalog_tables: &self.state.catalog.tables,
+            connection_config: self.state.connection_config.as_ref(),
+            generator_config: self.generator_config_for_current_flow(),
+            preference,
+            manually_selected_field,
+        }) {
+            table_preview::LoadTablePreviewOutcome::Loaded(preview) => Some(preview),
+            table_preview::LoadTablePreviewOutcome::Error { message } => {
+                self.state.last_message = message;
                 self.state.engine = Some(engine);
                 None
             }
         }
-    }
-
-    fn preview_from_schema(
-        &self,
-        schema: TableSchema,
-        preference: SoftDeletePreference,
-        manually_selected_field: Option<&str>,
-    ) -> GenerationPreview {
-        let engine = self.state.engine.unwrap_or(DatabaseEngine::PostgreSql);
-        let service = GenerationService::new(engine, self.generator_config_for_current_flow());
-        service.preview_from_table(schema, preference, manually_selected_field)
-    }
-
-    fn mock_table_schema(&self, selected: &DatabaseObject) -> Result<TableSchema, String> {
-        self.state
-            .catalog
-            .tables
-            .iter()
-            .find(|table| {
-                table.schema.name == selected.name
-                    && table.schema.schema == selected.schema.clone().unwrap_or_default()
-            })
-            .map(|table| table.schema.clone())
-            .ok_or_else(|| "la tabla no existe en el catalogo mock".to_string())
-    }
-
-    fn real_table_schema(&self, selected: &DatabaseObject) -> Result<TableSchema, String> {
-        let config = self
-            .state
-            .connection_config
-            .as_ref()
-            .ok_or_else(|| "no hay conexion real activa".to_string())?;
-        let schema = selected
-            .schema
-            .as_deref()
-            .ok_or_else(|| "el objeto no trae schema".to_string())?;
-
-        let adapter = SqlServerAdapter;
-        adapter
-            .get_table_schema(config, schema, &selected.name)
-            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn manual_soft_delete_candidates(&self) -> Vec<String> {
@@ -357,16 +309,7 @@ impl TuiApp {
     }
 
     pub(crate) fn run_generated_command(&self) -> Result<ProcessResult, String> {
-        let preview = self
-            .state
-            .preview
-            .as_ref()
-            .ok_or_else(|| "No hay comando generado para ejecutar.".to_string())?;
-
-        let runner = StdProcessRunner;
-        runner
-            .run(&preview.generated_command)
-            .map_err(|error| error.to_string())
+        generator_command::execute(self.state.preview.as_ref())
     }
 }
 
