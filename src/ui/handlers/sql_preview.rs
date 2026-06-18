@@ -1,7 +1,8 @@
 use crossterm::event::KeyCode;
 
+use crate::ui::navigation::{next_sql_preview_action, previous_sql_preview_action};
 use crate::ui::state::{CommandPreviewAction, Screen, SqlPreviewAction};
-use crate::ui::tui::{TuiApp, next_sql_preview_action, previous_sql_preview_action};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {

@@ -1,8 +1,9 @@
 use crossterm::event::KeyCode;
 
 use crate::domain::SoftDeletePreference;
+use crate::ui::navigation::{next_soft_delete_strategy, previous_soft_delete_strategy};
 use crate::ui::state::{CommandPreviewAction, Screen, SoftDeleteStrategy, SqlPreviewAction};
-use crate::ui::tui::{TuiApp, next_soft_delete_strategy, previous_soft_delete_strategy};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {

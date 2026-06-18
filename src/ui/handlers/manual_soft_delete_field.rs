@@ -1,8 +1,9 @@
 use crossterm::event::KeyCode;
 
 use crate::domain::SoftDeletePreference;
+use crate::ui::navigation::{select_next, select_previous};
 use crate::ui::state::{CommandPreviewAction, Screen};
-use crate::ui::tui::{TuiApp, select_next, select_previous};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     let total = app.manual_soft_delete_candidates().len();

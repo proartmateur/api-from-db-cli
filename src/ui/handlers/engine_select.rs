@@ -1,8 +1,9 @@
 use crossterm::event::KeyCode;
 
 use crate::ui::mocks::catalog_fn;
+use crate::ui::navigation::{next_engine_option, previous_engine_option};
 use crate::ui::state::Screen;
-use crate::ui::tui::{TuiApp, next_engine_option, previous_engine_option};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {

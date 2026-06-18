@@ -2,8 +2,9 @@ use crossterm::event::KeyCode;
 
 use crate::domain::ProcessResult;
 use crate::ui::mocks::process;
+use crate::ui::navigation::{next_command_preview_action, previous_command_preview_action};
 use crate::ui::state::{CommandPreviewAction, Screen};
-use crate::ui::tui::{TuiApp, next_command_preview_action, previous_command_preview_action};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {

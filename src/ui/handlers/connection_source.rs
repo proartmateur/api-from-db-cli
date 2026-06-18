@@ -2,8 +2,9 @@ use crossterm::event::KeyCode;
 
 use crate::domain::DatabaseEngine;
 use crate::ui::mocks::catalog_fn;
+use crate::ui::navigation::{next_connection_source, previous_connection_source};
 use crate::ui::state::{ConnectionSource, Screen};
-use crate::ui::tui::{TuiApp, next_connection_source, previous_connection_source};
+use crate::ui::tui::TuiApp;
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {

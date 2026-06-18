@@ -1,8 +1,9 @@
 use crossterm::event::KeyCode;
 
 use crate::domain::{DatabaseObjectType, SoftDeletePreference};
+use crate::ui::navigation::{select_next, select_previous};
 use crate::ui::state::{ConnectionSource, Screen};
-use crate::ui::tui::{TuiApp, object_type_label, select_next, select_previous};
+use crate::ui::tui::{TuiApp, object_type_label};
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     let total = app.state.catalog.objects.len();
