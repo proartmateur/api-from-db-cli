@@ -244,30 +244,6 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn manual_soft_delete_candidates(&self) -> Vec<String> {
-        self.state
-            .preview
-            .as_ref()
-            .map(|preview| {
-                preview
-                    .analyzed_schema
-                    .columns
-                    .iter()
-                    .filter(|column| column.normalized_type.as_generator_token() == "datetime")
-                    .map(|column| column.name.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    }
-
-    pub(crate) fn needs_soft_delete_decision(&self) -> bool {
-        self.state
-            .preview
-            .as_ref()
-            .map(|preview| preview.soft_delete.field_was_created)
-            .unwrap_or(false)
-    }
-
     pub(crate) fn generator_config_for_current_flow(&self) -> crate::domain::GeneratorConfig {
         self.state
             .connection_config

@@ -1,9 +1,11 @@
 use crossterm::event::KeyCode;
 
-use crate::domain::SoftDeletePreference;
 use crate::ui::navigation::{next_soft_delete_strategy, previous_soft_delete_strategy};
-use crate::ui::state::{CommandPreviewAction, Screen, SoftDeleteStrategy, SqlPreviewAction};
+use crate::ui::state::{CommandPreviewAction, Screen, SqlPreviewAction};
 use crate::ui::tui::TuiApp;
+use crate::ui::use_cases::soft_delete_resolution::{
+    self, ResolveSoftDeleteInput, ResolveSoftDeleteOutcome,
+};
 
 pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     match code {
@@ -20,32 +22,39 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
             app.state.soft_delete_screen.selected_strategy =
                 next_soft_delete_strategy(app.state.soft_delete_screen.selected_strategy);
         }
-        KeyCode::Enter => match app.state.soft_delete_screen.selected_strategy {
-            SoftDeleteStrategy::CreateDeletedAt => {
-                app.state.preview = app.load_preview_for_selected_table(
-                    SoftDeletePreference::PreferDeleteEndpoint,
-                    None,
-                );
+        KeyCode::Enter => match soft_delete_resolution::resolve(ResolveSoftDeleteInput {
+            strategy: app.state.soft_delete_screen.selected_strategy,
+            selected: app
+                .state
+                .selected_db_object
+                .as_ref()
+                .expect("selected object must exist"),
+            engine: app.state.engine.expect("engine must exist"),
+            catalog_mode: app.state.catalog.mode,
+            catalog_tables: &app.state.catalog.tables,
+            connection_config: app.state.connection_config.as_ref(),
+            generator_config: app.generator_config_for_current_flow(),
+        }) {
+            ResolveSoftDeleteOutcome::ShowSqlPreview { preview, message } => {
+                app.state.preview = Some(preview);
                 app.state.screen = Screen::SqlPreview;
                 app.state.sql_preview_screen.selected_action = SqlPreviewAction::ExecuteAndContinue;
-                app.state.last_message =
-                    "Se genero el ALTER TABLE para revisar antes de continuar.".to_string();
+                app.state.last_message = message;
             }
-            SoftDeleteStrategy::UseExistingField => {
-                app.state.soft_delete_screen.selected_manual_field = 0;
-                app.state.screen = Screen::ManualSoftDeleteField;
-                app.state.last_message =
-                    "Selecciona una columna datetime existente para soft delete.".to_string();
-            }
-            SoftDeleteStrategy::ContinueWithoutDelete => {
-                app.state.preview = app.load_preview_for_selected_table(
-                    SoftDeletePreference::SkipDeleteEndpoint,
-                    None,
-                );
+            ResolveSoftDeleteOutcome::ShowCommandPreview { preview, message } => {
+                app.state.preview = Some(preview);
                 app.state.screen = Screen::CommandPreview;
                 app.state.command_preview_screen.selected_action =
                     CommandPreviewAction::ExecuteCommand;
-                app.state.last_message = "Seguimos sin endpoint delete para esta API.".to_string();
+                app.state.last_message = message;
+            }
+            ResolveSoftDeleteOutcome::RequestManualField { message } => {
+                app.state.soft_delete_screen.selected_manual_field = 0;
+                app.state.screen = Screen::ManualSoftDeleteField;
+                app.state.last_message = message;
+            }
+            ResolveSoftDeleteOutcome::Error { message } => {
+                app.state.last_message = message;
             }
         },
         _ => {}

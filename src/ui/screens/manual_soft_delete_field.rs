@@ -1,9 +1,10 @@
 use ratatui::{Frame, layout::Rect, widgets::ListItem};
 
 use crate::ui::tui::{TuiApp, draw_menu};
+use crate::ui::use_cases::soft_delete_inspection;
 
 pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
-    let candidates = app.manual_soft_delete_candidates();
+    let candidates = soft_delete_inspection::manual_field_candidates(app.state.preview.as_ref());
     let items = candidates
         .iter()
         .map(|field| ListItem::new(field.clone()))
