@@ -23,6 +23,7 @@ use crate::domain::{
     ColumnSchema, ConnectionConfig, DatabaseEngine, DatabaseObject, DatabaseObjectType,
     ProcessResult, SoftDeletePreference, TableSchema,
 };
+use crate::ui::handlers;
 use crate::ui::screens;
 use crate::ui::state::{
     AppState, Catalog, CatalogMode, CommandPreviewAction, CommandPreviewScreenState,
@@ -109,15 +110,15 @@ impl TuiApp {
 
     fn handle_key(&mut self, code: KeyCode) {
         match self.state.screen {
-            Screen::ConnectionSource => self.handle_connection_source(code),
-            Screen::EngineSelect => self.handle_engine_select(code),
-            Screen::ObjectExplorer => self.handle_object_explorer(code),
-            Screen::ObjectDetails => self.handle_object_details(code),
-            Screen::SoftDeleteStrategy => self.handle_soft_delete_strategy(code),
-            Screen::ManualSoftDeleteField => self.handle_manual_soft_delete_field(code),
-            Screen::SqlPreview => self.handle_sql_preview(code),
-            Screen::CommandPreview => self.handle_command_preview(code),
-            Screen::ProcessResult => self.handle_process_result(code),
+            Screen::ConnectionSource => handlers::connection_source::handle(self, code),
+            Screen::EngineSelect => handlers::engine_select::handle(self, code),
+            Screen::ObjectExplorer => handlers::object_explorer::handle(self, code),
+            Screen::ObjectDetails => handlers::object_details::handle(self, code),
+            Screen::SoftDeleteStrategy => handlers::soft_delete_strategy::handle(self, code),
+            Screen::ManualSoftDeleteField => handlers::manual_soft_delete_field::handle(self, code),
+            Screen::SqlPreview => handlers::sql_preview::handle(self, code),
+            Screen::CommandPreview => handlers::command_preview::handle(self, code),
+            Screen::ProcessResult => handlers::process_result::handle(self, code),
         }
     }
 
@@ -125,7 +126,7 @@ impl TuiApp {
         self.state.generator_binary_state = detect_generator_binary_state();
     }
 
-    fn ensure_generator_binary_ready(&mut self) -> bool {
+    pub(crate) fn ensure_generator_binary_ready(&mut self) -> bool {
         self.refresh_generator_binary_state();
 
         match &self.state.generator_binary_state {
@@ -158,7 +159,7 @@ impl TuiApp {
         }
     }
 
-    fn handle_config_file_selection(&mut self) {
+    pub(crate) fn handle_config_file_selection(&mut self) {
         let loader = ConfigLoader;
         self.state.connection_source = Some(ConnectionSource::ConfigFile);
 
@@ -243,404 +244,6 @@ impl TuiApp {
         }
     }
 
-    fn handle_connection_source(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up => {
-                self.state.connection_source_screen.selected_source =
-                    previous_connection_source(self.state.connection_source_screen.selected_source);
-            }
-            KeyCode::Down => {
-                self.state.connection_source_screen.selected_source =
-                    next_connection_source(self.state.connection_source_screen.selected_source);
-            }
-            KeyCode::Enter => {
-                if !self.ensure_generator_binary_ready() {
-                    return;
-                }
-
-                match self.state.connection_source_screen.selected_source {
-                    ConnectionSource::Manual => {
-                        self.state.connection_source = Some(ConnectionSource::Manual);
-                        self.state.connection_config = None;
-                        self.state.catalog = mock_catalog(DatabaseEngine::PostgreSql);
-                        self.state.screen = Screen::EngineSelect;
-                        self.state.last_message =
-                            "Generador validado. Conexion mock preparada. Ahora elige el motor de base de datos."
-                                .to_string();
-                    }
-                    ConnectionSource::ConfigFile => self.handle_config_file_selection(),
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_engine_select(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = Screen::ConnectionSource;
-                self.state.last_message =
-                    "Regresaste a la seleccion del origen de conexion.".to_string();
-            }
-            KeyCode::Up => {
-                self.state.engine_select_screen.selected_engine =
-                    previous_engine_option(self.state.engine_select_screen.selected_engine);
-            }
-            KeyCode::Down => {
-                self.state.engine_select_screen.selected_engine =
-                    next_engine_option(self.state.engine_select_screen.selected_engine);
-            }
-            KeyCode::Enter => {
-                let engine = self.state.engine_select_screen.selected_engine.to_engine();
-                self.state.engine = Some(engine);
-                self.state.catalog = mock_catalog(engine);
-                self.state.connection_config = None;
-                self.state.object_explorer_screen.selected_object = 0;
-                self.state.preview = None;
-                self.state.process_result = None;
-                self.state.screen = Screen::ObjectExplorer;
-                self.state.last_message = format!(
-                    "Conexion exitosa simulada a {}. Explora los objetos disponibles.",
-                    engine
-                );
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_object_explorer(&mut self, code: KeyCode) {
-        let total = self.state.catalog.objects.len();
-        match code {
-            KeyCode::Esc => {
-                self.state.screen =
-                    if self.state.connection_source == Some(ConnectionSource::ConfigFile) {
-                        Screen::ConnectionSource
-                    } else {
-                        Screen::EngineSelect
-                    };
-                self.state.last_message =
-                    "Puedes cambiar de origen o motor sin perder control del flujo.".to_string();
-            }
-            KeyCode::Up => select_previous(
-                &mut self.state.object_explorer_screen.selected_object,
-                total,
-            ),
-            KeyCode::Down => select_next(
-                &mut self.state.object_explorer_screen.selected_object,
-                total,
-            ),
-            KeyCode::Enter => {
-                if let Some(object) = self
-                    .state
-                    .catalog
-                    .objects
-                    .get(self.state.object_explorer_screen.selected_object)
-                    .cloned()
-                {
-                    self.state.selected_db_object = Some(object.clone());
-                    self.state.screen = Screen::ObjectDetails;
-                    self.state.last_message = format!(
-                        "Inspeccionando {} `{}`.",
-                        object_type_label(object.object_type),
-                        object.name
-                    );
-
-                    if object.object_type == DatabaseObjectType::Table {
-                        self.state.preview = self.load_preview_for_selected_table(
-                            SoftDeletePreference::PreferDeleteEndpoint,
-                            None,
-                        );
-                    } else {
-                        self.state.preview = None;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_object_details(&mut self, code: KeyCode) {
-        let Some(selected) = self.state.selected_db_object.clone() else {
-            self.state.screen = Screen::ObjectExplorer;
-            return;
-        };
-
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = Screen::ObjectExplorer;
-                self.state.last_message = "Regresaste al explorador de objetos.".to_string();
-            }
-            KeyCode::Enter if selected.object_type == DatabaseObjectType::Table => {
-                if self.state.preview.is_none() {
-                    self.state.last_message =
-                        "No fue posible preparar la tabla. Revisa la conexion o el schema."
-                            .to_string();
-                } else if self.needs_soft_delete_decision() {
-                    self.state.screen = Screen::SoftDeleteStrategy;
-                    self.state.soft_delete_screen.selected_strategy =
-                        SoftDeleteStrategy::CreateDeletedAt;
-                    self.state.last_message =
-                        "No existe deleted_at compatible. Decide como quieres resolver soft delete."
-                            .to_string();
-                } else {
-                    self.state.screen = Screen::CommandPreview;
-                    self.state.command_preview_screen.selected_action =
-                        CommandPreviewAction::ExecuteCommand;
-                    self.state.last_message =
-                        "La tabla ya tiene suficiente metadata para construir el comando."
-                            .to_string();
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_soft_delete_strategy(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = Screen::ObjectDetails;
-                self.state.last_message =
-                    "Puedes revisar de nuevo la tabla antes de decidir.".to_string();
-            }
-            KeyCode::Up => {
-                self.state.soft_delete_screen.selected_strategy =
-                    previous_soft_delete_strategy(self.state.soft_delete_screen.selected_strategy);
-            }
-            KeyCode::Down => {
-                self.state.soft_delete_screen.selected_strategy =
-                    next_soft_delete_strategy(self.state.soft_delete_screen.selected_strategy);
-            }
-            KeyCode::Enter => match self.state.soft_delete_screen.selected_strategy {
-                SoftDeleteStrategy::CreateDeletedAt => {
-                    self.state.preview = self.load_preview_for_selected_table(
-                        SoftDeletePreference::PreferDeleteEndpoint,
-                        None,
-                    );
-                    self.state.screen = Screen::SqlPreview;
-                    self.state.sql_preview_screen.selected_action =
-                        SqlPreviewAction::ExecuteAndContinue;
-                    self.state.last_message =
-                        "Se genero el ALTER TABLE para revisar antes de continuar.".to_string();
-                }
-                SoftDeleteStrategy::UseExistingField => {
-                    self.state.soft_delete_screen.selected_manual_field = 0;
-                    self.state.screen = Screen::ManualSoftDeleteField;
-                    self.state.last_message =
-                        "Selecciona una columna datetime existente para soft delete.".to_string();
-                }
-                SoftDeleteStrategy::ContinueWithoutDelete => {
-                    self.state.preview = self.load_preview_for_selected_table(
-                        SoftDeletePreference::SkipDeleteEndpoint,
-                        None,
-                    );
-                    self.state.screen = Screen::CommandPreview;
-                    self.state.command_preview_screen.selected_action =
-                        CommandPreviewAction::ExecuteCommand;
-                    self.state.last_message =
-                        "Seguimos sin endpoint delete para esta API.".to_string();
-                }
-            },
-            _ => {}
-        }
-    }
-
-    fn handle_manual_soft_delete_field(&mut self, code: KeyCode) {
-        let total = self.manual_soft_delete_candidates().len();
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = Screen::SoftDeleteStrategy;
-                self.state.last_message =
-                    "Regresaste a las opciones para resolver soft delete.".to_string();
-            }
-            KeyCode::Up => select_previous(
-                &mut self.state.soft_delete_screen.selected_manual_field,
-                total,
-            ),
-            KeyCode::Down => select_next(
-                &mut self.state.soft_delete_screen.selected_manual_field,
-                total,
-            ),
-            KeyCode::Enter => {
-                if let Some(field) = self
-                    .manual_soft_delete_candidates()
-                    .get(self.state.soft_delete_screen.selected_manual_field)
-                    .cloned()
-                {
-                    self.state.preview = self.load_preview_for_selected_table(
-                        SoftDeletePreference::PreferDeleteEndpoint,
-                        Some(field.as_str()),
-                    );
-                    self.state.screen = Screen::CommandPreview;
-                    self.state.command_preview_screen.selected_action =
-                        CommandPreviewAction::ExecuteCommand;
-                    self.state.last_message =
-                        format!("Usaremos `{}` como columna de soft delete.", field);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_sql_preview(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = Screen::SoftDeleteStrategy;
-                self.state.last_message =
-                    "Puedes elegir otra estrategia antes de ejecutar nada.".to_string();
-            }
-            KeyCode::Up => {
-                self.state.sql_preview_screen.selected_action =
-                    previous_sql_preview_action(self.state.sql_preview_screen.selected_action);
-            }
-            KeyCode::Down => {
-                self.state.sql_preview_screen.selected_action =
-                    next_sql_preview_action(self.state.sql_preview_screen.selected_action);
-            }
-            KeyCode::Enter => match self.state.sql_preview_screen.selected_action {
-                SqlPreviewAction::ExecuteAndContinue => {
-                    self.state.screen = Screen::CommandPreview;
-                    self.state.command_preview_screen.selected_action =
-                        CommandPreviewAction::ExecuteCommand;
-                    self.state.last_message =
-                        "ALTER TABLE confirmado para este flujo. La metadata se considera refrescada."
-                            .to_string();
-                }
-                SqlPreviewAction::CopyAndContinue => {
-                    self.state.screen = Screen::CommandPreview;
-                    self.state.command_preview_screen.selected_action =
-                        CommandPreviewAction::ExecuteCommand;
-                    self.state.last_message =
-                        "SQL marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
-                            .to_string();
-                }
-                SqlPreviewAction::CopyAndStay => {
-                    self.state.last_message =
-                        "SQL marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
-                            .to_string();
-                }
-                SqlPreviewAction::Cancel => {
-                    self.state.screen = Screen::SoftDeleteStrategy;
-                    self.state.last_message =
-                        "Operacion cancelada. La base sigue intacta.".to_string();
-                }
-            },
-            _ => {}
-        }
-    }
-
-    fn handle_command_preview(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Esc => {
-                self.state.screen = if self
-                    .state
-                    .preview
-                    .as_ref()
-                    .and_then(|preview| preview.generated_sql.as_ref())
-                    .is_some()
-                {
-                    Screen::SqlPreview
-                } else {
-                    Screen::ObjectDetails
-                };
-                self.state.last_message =
-                    "Puedes revisar el paso anterior antes de ejecutar.".to_string();
-            }
-            KeyCode::Up => {
-                self.state.command_preview_screen.selected_action = previous_command_preview_action(
-                    self.state.command_preview_screen.selected_action,
-                );
-            }
-            KeyCode::Down => {
-                self.state.command_preview_screen.selected_action =
-                    next_command_preview_action(self.state.command_preview_screen.selected_action);
-            }
-            KeyCode::Enter => match self.state.command_preview_screen.selected_action {
-                CommandPreviewAction::ExecuteCommand => match self.run_generated_command() {
-                    Ok(result) => {
-                        self.state.process_result = Some(result);
-                        self.state.process_result_screen.scroll = 0;
-                        self.state.screen = Screen::ProcessResult;
-                        self.state.last_message =
-                            "Ejecucion completada. Ya puedes revisar stdout y stderr.".to_string();
-                    }
-                    Err(error) => {
-                        self.state.process_result = Some(ProcessResult {
-                            exit_code: -1,
-                            stdout: String::new(),
-                            stderr: error,
-                            success: false,
-                        });
-                        self.state.process_result_screen.scroll = 0;
-                        self.state.screen = Screen::ProcessResult;
-                        self.state.last_message =
-                            "La ejecucion del comando fallo antes de completar el proceso."
-                                .to_string();
-                    }
-                },
-                CommandPreviewAction::CopyAndMarkExternalExecution => {
-                    self.state.process_result =
-                        Some(mock_external_process_result(self.state.preview.as_ref()));
-                    self.state.process_result_screen.scroll = 0;
-                    self.state.screen = Screen::ProcessResult;
-                    self.state.last_message =
-                        "Comando marcado como copiado para ejecucion externa.".to_string();
-                }
-                CommandPreviewAction::CopyAndStay => {
-                    self.state.last_message =
-                        "Comando marcado como copiado al portapapeles virtual.".to_string();
-                }
-                CommandPreviewAction::Cancel => {
-                    self.state.screen = Screen::ObjectExplorer;
-                    self.state.last_message =
-                        "Ejecucion cancelada. Regresaste al explorador de objetos.".to_string();
-                }
-            },
-            _ => {}
-        }
-    }
-
-    fn handle_process_result(&mut self, code: KeyCode) {
-        let total_lines = self.process_result_line_count() as u16;
-        match code {
-            KeyCode::Up => {
-                self.state.process_result_screen.scroll =
-                    self.state.process_result_screen.scroll.saturating_sub(1);
-            }
-            KeyCode::Down => {
-                self.state.process_result_screen.scroll = self
-                    .state
-                    .process_result_screen
-                    .scroll
-                    .saturating_add(1)
-                    .min(total_lines.saturating_sub(1));
-            }
-            KeyCode::PageUp => {
-                self.state.process_result_screen.scroll =
-                    self.state.process_result_screen.scroll.saturating_sub(10);
-            }
-            KeyCode::PageDown => {
-                self.state.process_result_screen.scroll = self
-                    .state
-                    .process_result_screen
-                    .scroll
-                    .saturating_add(10)
-                    .min(total_lines.saturating_sub(1));
-            }
-            KeyCode::Home => {
-                self.state.process_result_screen.scroll = 0;
-            }
-            KeyCode::End => {
-                self.state.process_result_screen.scroll = total_lines.saturating_sub(1);
-            }
-            KeyCode::Esc | KeyCode::Enter => {
-                self.state.screen = Screen::ObjectExplorer;
-                self.state.last_message =
-                    "El flujo termino. Puedes probar otra tabla o cambiar de motor.".to_string();
-            }
-            _ => {}
-        }
-    }
-
     fn draw(&self, frame: &mut Frame) {
         let areas = Layout::default()
             .direction(Direction::Vertical)
@@ -698,7 +301,7 @@ impl TuiApp {
         parts.join("  |  ")
     }
 
-    fn load_preview_for_selected_table(
+    pub(crate) fn load_preview_for_selected_table(
         &mut self,
         preference: SoftDeletePreference,
         manually_selected_field: Option<&str>,
@@ -785,7 +388,7 @@ impl TuiApp {
             .unwrap_or_default()
     }
 
-    fn needs_soft_delete_decision(&self) -> bool {
+    pub(crate) fn needs_soft_delete_decision(&self) -> bool {
         self.state
             .preview
             .as_ref()
@@ -829,11 +432,11 @@ impl TuiApp {
         lines
     }
 
-    fn process_result_line_count(&self) -> usize {
+    pub(crate) fn process_result_line_count(&self) -> usize {
         self.build_process_result_lines().len()
     }
 
-    fn run_generated_command(&self) -> Result<ProcessResult, String> {
+    pub(crate) fn run_generated_command(&self) -> Result<ProcessResult, String> {
         let preview = self
             .state
             .preview
@@ -857,29 +460,29 @@ pub(crate) fn selected_index<T: Copy + PartialEq, const N: usize>(
         .unwrap_or(0)
 }
 
-fn next_connection_source(selected: ConnectionSource) -> ConnectionSource {
+pub(crate) fn next_connection_source(selected: ConnectionSource) -> ConnectionSource {
     match selected {
         ConnectionSource::Manual => ConnectionSource::ConfigFile,
         ConnectionSource::ConfigFile => ConnectionSource::Manual,
     }
 }
 
-fn previous_connection_source(selected: ConnectionSource) -> ConnectionSource {
+pub(crate) fn previous_connection_source(selected: ConnectionSource) -> ConnectionSource {
     next_connection_source(selected)
 }
 
-fn next_engine_option(selected: EngineOption) -> EngineOption {
+pub(crate) fn next_engine_option(selected: EngineOption) -> EngineOption {
     match selected {
         EngineOption::PostgreSql => EngineOption::SqlServer,
         EngineOption::SqlServer => EngineOption::PostgreSql,
     }
 }
 
-fn previous_engine_option(selected: EngineOption) -> EngineOption {
+pub(crate) fn previous_engine_option(selected: EngineOption) -> EngineOption {
     next_engine_option(selected)
 }
 
-fn next_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
+pub(crate) fn next_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
     match selected {
         SoftDeleteStrategy::CreateDeletedAt => SoftDeleteStrategy::UseExistingField,
         SoftDeleteStrategy::UseExistingField => SoftDeleteStrategy::ContinueWithoutDelete,
@@ -887,7 +490,7 @@ fn next_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy
     }
 }
 
-fn previous_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
+pub(crate) fn previous_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStrategy {
     match selected {
         SoftDeleteStrategy::CreateDeletedAt => SoftDeleteStrategy::ContinueWithoutDelete,
         SoftDeleteStrategy::UseExistingField => SoftDeleteStrategy::CreateDeletedAt,
@@ -895,7 +498,7 @@ fn previous_soft_delete_strategy(selected: SoftDeleteStrategy) -> SoftDeleteStra
     }
 }
 
-fn next_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
+pub(crate) fn next_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
     match selected {
         SqlPreviewAction::ExecuteAndContinue => SqlPreviewAction::CopyAndContinue,
         SqlPreviewAction::CopyAndContinue => SqlPreviewAction::CopyAndStay,
@@ -904,7 +507,7 @@ fn next_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
     }
 }
 
-fn previous_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
+pub(crate) fn previous_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
     match selected {
         SqlPreviewAction::ExecuteAndContinue => SqlPreviewAction::Cancel,
         SqlPreviewAction::CopyAndContinue => SqlPreviewAction::ExecuteAndContinue,
@@ -913,7 +516,7 @@ fn previous_sql_preview_action(selected: SqlPreviewAction) -> SqlPreviewAction {
     }
 }
 
-fn next_command_preview_action(selected: CommandPreviewAction) -> CommandPreviewAction {
+pub(crate) fn next_command_preview_action(selected: CommandPreviewAction) -> CommandPreviewAction {
     match selected {
         CommandPreviewAction::ExecuteCommand => CommandPreviewAction::CopyAndMarkExternalExecution,
         CommandPreviewAction::CopyAndMarkExternalExecution => CommandPreviewAction::CopyAndStay,
@@ -922,7 +525,9 @@ fn next_command_preview_action(selected: CommandPreviewAction) -> CommandPreview
     }
 }
 
-fn previous_command_preview_action(selected: CommandPreviewAction) -> CommandPreviewAction {
+pub(crate) fn previous_command_preview_action(
+    selected: CommandPreviewAction,
+) -> CommandPreviewAction {
     match selected {
         CommandPreviewAction::ExecuteCommand => CommandPreviewAction::Cancel,
         CommandPreviewAction::CopyAndMarkExternalExecution => CommandPreviewAction::ExecuteCommand,
@@ -1076,7 +681,7 @@ pub(crate) fn two_column_layout(area: Rect) -> [Rect; 2] {
     [chunks[0], chunks[1]]
 }
 
-fn select_next(selected: &mut usize, total: usize) {
+pub(crate) fn select_next(selected: &mut usize, total: usize) {
     if total == 0 {
         *selected = 0;
     } else {
@@ -1084,7 +689,7 @@ fn select_next(selected: &mut usize, total: usize) {
     }
 }
 
-fn select_previous(selected: &mut usize, total: usize) {
+pub(crate) fn select_previous(selected: &mut usize, total: usize) {
     if total == 0 {
         *selected = 0;
     } else if *selected == 0 {
@@ -1102,7 +707,7 @@ pub(crate) fn object_type_label(object_type: DatabaseObjectType) -> &'static str
     }
 }
 
-fn mock_external_process_result(preview: Option<&GenerationPreview>) -> ProcessResult {
+pub(crate) fn mock_external_process_result(preview: Option<&GenerationPreview>) -> ProcessResult {
     let command = preview
         .map(|item| item.generated_command.raw_command.clone())
         .unwrap_or_else(|| "gen.exe demo id:int".to_string());
@@ -1117,7 +722,7 @@ fn mock_external_process_result(preview: Option<&GenerationPreview>) -> ProcessR
     }
 }
 
-fn mock_catalog(engine: DatabaseEngine) -> Catalog {
+pub(crate) fn mock_catalog(engine: DatabaseEngine) -> Catalog {
     match engine {
         DatabaseEngine::PostgreSql => Catalog {
             mode: CatalogMode::Mock,
