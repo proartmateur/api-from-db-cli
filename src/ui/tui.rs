@@ -24,7 +24,7 @@ use crate::domain::{
     SoftDeletePreference, TableSchema,
 };
 use crate::ui::handlers;
-use crate::ui::mocks;
+use crate::ui::mocks::catalog_fn;
 use crate::ui::screens;
 use crate::ui::state::{
     AppState, Catalog, CatalogMode, CommandPreviewAction, CommandPreviewScreenState,
@@ -62,7 +62,7 @@ impl TuiApp {
                 process_result_screen: ProcessResultScreenState { scroll: 0 },
                 connection_source: None,
                 engine: None,
-                catalog: mocks::catalog(DatabaseEngine::PostgreSql),
+                catalog: catalog_fn(DatabaseEngine::PostgreSql),
                 selected_db_object: None,
                 preview: None,
                 process_result: None,
@@ -235,7 +235,7 @@ impl TuiApp {
                 }
             }
             DatabaseEngine::PostgreSql => {
-                self.state.catalog = mocks::catalog(DatabaseEngine::PostgreSql);
+                self.state.catalog = catalog_fn(DatabaseEngine::PostgreSql);
                 self.state.screen = Screen::ObjectExplorer;
                 self.state.last_message = format!(
                     "Configuracion cargada desde `{}`. PostgreSQL aun usa catalogo mock mientras conectamos su adapter real.",

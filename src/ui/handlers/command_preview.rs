@@ -1,7 +1,7 @@
 use crossterm::event::KeyCode;
 
 use crate::domain::ProcessResult;
-use crate::ui::mocks;
+use crate::ui::mocks::process;
 use crate::ui::state::{CommandPreviewAction, Screen};
 use crate::ui::tui::{TuiApp, next_command_preview_action, previous_command_preview_action};
 
@@ -54,7 +54,7 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
             },
             CommandPreviewAction::CopyAndMarkExternalExecution => {
                 app.state.process_result =
-                    Some(mocks::external_process_result(app.state.preview.as_ref()));
+                    Some(process::external_process_result(app.state.preview.as_ref()));
                 app.state.process_result_screen.scroll = 0;
                 app.state.screen = Screen::ProcessResult;
                 app.state.last_message =
