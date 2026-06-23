@@ -38,10 +38,15 @@ pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
         })
         .collect::<Vec<_>>();
 
+    let tables = app.state.catalog.objects.iter().filter(|o| o.object_type == DatabaseObjectType::Table).count();
+    let functions = app.state.catalog.objects.iter().filter(|o| o.object_type == DatabaseObjectType::Function).count();
+    let procs = app.state.catalog.objects.iter().filter(|o| o.object_type == DatabaseObjectType::StoredProcedure).count();
+    let title = format!("Objetos Disponibles ({tables}T,{functions}F,{procs}SP)");
+
     render_selectable_list(
         frame,
         chunks[0],
-        "Objetos Disponibles",
+        &title,
         &items,
         app.state.object_explorer_screen.selected_object,
     );
