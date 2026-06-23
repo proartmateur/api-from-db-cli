@@ -1,5 +1,5 @@
 use crate::adapters::metadata_adapter_for;
-use crate::domain::{ConnectionConfig, DatabaseEngine, GeneratorConfig};
+use crate::domain::{self, ConnectionConfig, DatabaseEngine, GeneratorConfig};
 use crate::ui::state::{Catalog, CatalogMode};
 
 pub(crate) struct ManualConnectionInput {
@@ -88,7 +88,9 @@ pub(crate) fn connect(input: ManualConnectionInput) -> ManualConnectionOutcome {
 
     match adapter.test_connection(&config) {
         Ok(()) => match adapter.list_objects(&config) {
-            Ok(objects) => ManualConnectionOutcome::Connected {
+            Ok(mut objects) => {
+                domain::sort_objects(&mut objects);
+                ManualConnectionOutcome::Connected {
                 config,
                 catalog: Catalog {
                     objects,
@@ -99,7 +101,7 @@ pub(crate) fn connect(input: ManualConnectionInput) -> ManualConnectionOutcome {
                     "Conexion manual a {} establecida. Explora los objetos disponibles.",
                     input.engine
                 ),
-            },
+            }},
             Err(error) => ManualConnectionOutcome::ConnectionError {
                 message: format!(
                     "La conexion a {} funciono, pero no se pudieron listar objetos: {}",

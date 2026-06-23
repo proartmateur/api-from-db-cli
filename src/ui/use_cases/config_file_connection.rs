@@ -1,6 +1,6 @@
 use crate::adapters::config::ConfigLoader;
 use crate::adapters::metadata_adapter_for;
-use crate::domain::{ConnectionConfig, DatabaseEngine};
+use crate::domain::{self, ConnectionConfig, DatabaseEngine};
 use crate::ui::state::{Catalog, CatalogMode};
 
 pub(crate) enum ConfigFileConnectionOutcome {
@@ -65,7 +65,9 @@ fn activate_connection(config: ConnectionConfig, path: String) -> ConfigFileConn
 
     match adapter.test_connection(&config) {
         Ok(()) => match adapter.list_objects(&config) {
-            Ok(objects) => ConfigFileConnectionOutcome::Loaded {
+            Ok(mut objects) => {
+                domain::sort_objects(&mut objects);
+                ConfigFileConnectionOutcome::Loaded {
                 path: path.clone(),
                 engine,
                 config,
@@ -78,7 +80,7 @@ fn activate_connection(config: ConnectionConfig, path: String) -> ConfigFileConn
                     "Configuracion cargada desde `{}`. Conexion real a {} establecida.",
                     path, engine
                 ),
-            },
+            }},
             Err(error) => ConfigFileConnectionOutcome::Error {
                 path: Some(path),
                 message: format!(

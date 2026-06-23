@@ -31,6 +31,25 @@ pub enum DatabaseObjectType {
     StoredProcedure,
 }
 
+impl DatabaseObjectType {
+    fn sort_priority(self) -> u8 {
+        match self {
+            Self::Table => 0,
+            Self::Function => 1,
+            Self::StoredProcedure => 2,
+        }
+    }
+}
+
+pub fn sort_objects(objects: &mut Vec<DatabaseObject>) {
+    objects.sort_by(|a, b| {
+        a.object_type
+            .sort_priority()
+            .cmp(&b.object_type.sort_priority())
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionConfig {
     pub id: String,
@@ -229,4 +248,33 @@ pub struct ProcessResult {
 pub enum SoftDeletePreference {
     PreferDeleteEndpoint,
     SkipDeleteEndpoint,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(name: &str, object_type: DatabaseObjectType) -> DatabaseObject {
+        DatabaseObject {
+            name: name.to_string(),
+            schema: None,
+            object_type,
+            engine: DatabaseEngine::PostgreSql,
+        }
+    }
+
+    #[test]
+    fn sort_objects_tables_first_then_alphabetical() {
+        let mut objects = vec![
+            obj("zebra_func", DatabaseObjectType::Function),
+            obj("b_table", DatabaseObjectType::Table),
+            obj("a_proc", DatabaseObjectType::StoredProcedure),
+            obj("a_table", DatabaseObjectType::Table),
+        ];
+        sort_objects(&mut objects);
+        assert_eq!(objects[0].name, "a_table");
+        assert_eq!(objects[1].name, "b_table");
+        assert_eq!(objects[2].name, "zebra_func");
+        assert_eq!(objects[3].name, "a_proc");
+    }
 }
