@@ -1,10 +1,12 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    text::{Line, Text},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, ListItem, Paragraph, Wrap},
 };
 
+use crate::domain::DatabaseObjectType;
 use crate::ui::state::{CatalogMode, ConnectionSource};
 use crate::ui::tui::{TuiApp, object_type_label, render_selectable_list, two_column_layout};
 
@@ -17,11 +19,22 @@ pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
         .iter()
         .map(|object| {
             let schema = object.schema.as_deref().unwrap_or("<sin schema>");
-            ListItem::new(format!(
-                "[{schema}] {} {}",
+            let type_color = match object.object_type {
+                DatabaseObjectType::Table => Color::Green,
+                DatabaseObjectType::Function => Color::Cyan,
+                DatabaseObjectType::StoredProcedure => Color::Magenta,
+            };
+            let type_span = Span::styled(
                 object_type_label(object.object_type),
-                object.name
-            ))
+                Style::default()
+                    .fg(type_color)
+                    .add_modifier(Modifier::BOLD),
+            );
+            ListItem::new(Line::from(vec![
+                Span::raw(format!("[{schema}] ")),
+                type_span,
+                Span::raw(format!(" {}", object.name)),
+            ]))
         })
         .collect::<Vec<_>>();
 
