@@ -1,6 +1,5 @@
-use crate::adapters::sqlserver::SqlServerAdapter;
+use crate::adapters::metadata_adapter_for;
 use crate::app::generation_service::{GenerationPreview, GenerationService};
-use crate::core::ports::MetadataExplorer;
 use crate::domain::{
     ConnectionConfig, DatabaseEngine, DatabaseObject, GeneratorConfig, SoftDeletePreference,
     TableSchema,
@@ -26,7 +25,7 @@ pub(crate) enum LoadTablePreviewOutcome {
 pub(crate) fn load(input: LoadTablePreviewInput<'_>) -> LoadTablePreviewOutcome {
     let schema = match input.catalog_mode {
         CatalogMode::Mock => mock_table_schema(input.selected, input.catalog_tables),
-        CatalogMode::Real => real_table_schema(input.selected, input.connection_config),
+        CatalogMode::Real => real_table_schema(input.selected, input.engine, input.connection_config),
     };
 
     match schema {
@@ -75,6 +74,7 @@ fn mock_table_schema(
 
 fn real_table_schema(
     selected: &DatabaseObject,
+    engine: DatabaseEngine,
     connection_config: Option<&ConnectionConfig>,
 ) -> Result<TableSchema, String> {
     let config = connection_config.ok_or_else(|| "no hay conexion real activa".to_string())?;
@@ -83,7 +83,7 @@ fn real_table_schema(
         .as_deref()
         .ok_or_else(|| "el objeto no trae schema".to_string())?;
 
-    let adapter = SqlServerAdapter;
+    let adapter = metadata_adapter_for(engine);
     adapter
         .get_table_schema(config, schema, &selected.name)
         .map_err(|error| error.to_string())

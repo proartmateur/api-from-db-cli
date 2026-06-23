@@ -7,6 +7,7 @@ use crate::domain::{ConnectionConfig, DatabaseEngine, DatabaseObject, ProcessRes
 pub(crate) enum Screen {
     ConnectionSource,
     EngineSelect,
+    ManualConnection,
     ObjectExplorer,
     ObjectDetails,
     SoftDeleteStrategy,
@@ -77,6 +78,56 @@ impl EngineOption {
             Self::PostgreSql => DatabaseEngine::PostgreSql,
             Self::SqlServer => DatabaseEngine::SqlServer,
         }
+    }
+
+    pub(crate) fn default_port(self) -> u16 {
+        self.to_engine().default_port()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManualConnectionField {
+    Host,
+    Port,
+    Database,
+    Username,
+    Password,
+    Connect,
+}
+
+impl ManualConnectionField {
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Host,
+        Self::Port,
+        Self::Database,
+        Self::Username,
+        Self::Password,
+        Self::Connect,
+    ];
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Host => "Host",
+            Self::Port => "Port",
+            Self::Database => "Database",
+            Self::Username => "Username",
+            Self::Password => "Password",
+            Self::Connect => "Conectar",
+        }
+    }
+
+    pub(crate) fn is_editable(self) -> bool {
+        !matches!(self, Self::Connect)
+    }
+
+    pub(crate) fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub(crate) fn previous(self) -> Self {
+        let idx = Self::ALL.iter().position(|f| *f == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
 
@@ -168,6 +219,59 @@ pub(crate) struct EngineSelectScreenState {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ManualConnectionScreenState {
+    pub(crate) selected_field: ManualConnectionField,
+    pub(crate) editing: bool,
+    pub(crate) host: String,
+    pub(crate) port: String,
+    pub(crate) database: String,
+    pub(crate) username: String,
+    pub(crate) password: String,
+}
+
+impl ManualConnectionScreenState {
+    pub(crate) fn for_engine(engine: EngineOption) -> Self {
+        Self {
+            selected_field: ManualConnectionField::Host,
+            editing: false,
+            host: "localhost".to_string(),
+            port: engine.default_port().to_string(),
+            database: String::new(),
+            username: String::new(),
+            password: String::new(),
+        }
+    }
+
+    pub(crate) fn value(&self, field: ManualConnectionField) -> &str {
+        match field {
+            ManualConnectionField::Host => &self.host,
+            ManualConnectionField::Port => &self.port,
+            ManualConnectionField::Database => &self.database,
+            ManualConnectionField::Username => &self.username,
+            ManualConnectionField::Password => &self.password,
+            ManualConnectionField::Connect => "",
+        }
+    }
+
+    pub(crate) fn value_mut(&mut self, field: ManualConnectionField) -> &mut String {
+        match field {
+            ManualConnectionField::Host => &mut self.host,
+            ManualConnectionField::Port => &mut self.port,
+            ManualConnectionField::Database => &mut self.database,
+            ManualConnectionField::Username => &mut self.username,
+            ManualConnectionField::Password => &mut self.password,
+            ManualConnectionField::Connect => {
+                panic!("Connect no es un campo editable");
+            }
+        }
+    }
+
+    pub(crate) fn reset_for_engine(&mut self, engine: EngineOption) {
+        *self = Self::for_engine(engine);
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ObjectExplorerScreenState {
     pub(crate) selected_object: usize,
 }
@@ -198,6 +302,7 @@ pub(crate) struct AppState {
     pub(crate) screen: Screen,
     pub(crate) connection_source_screen: ConnectionSourceScreenState,
     pub(crate) engine_select_screen: EngineSelectScreenState,
+    pub(crate) manual_connection_screen: ManualConnectionScreenState,
     pub(crate) object_explorer_screen: ObjectExplorerScreenState,
     pub(crate) soft_delete_screen: SoftDeleteScreenState,
     pub(crate) sql_preview_screen: SqlPreviewScreenState,

@@ -1,6 +1,7 @@
 pub mod command_preview;
 pub mod connection_source;
 pub mod engine_select;
+pub mod manual_connection;
 pub mod manual_soft_delete_field;
 pub mod object_details;
 pub mod object_explorer;

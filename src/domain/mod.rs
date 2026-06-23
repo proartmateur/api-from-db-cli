@@ -15,6 +15,15 @@ impl fmt::Display for DatabaseEngine {
     }
 }
 
+impl DatabaseEngine {
+    pub fn default_port(self) -> u16 {
+        match self {
+            Self::PostgreSql => 5432,
+            Self::SqlServer => 1433,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatabaseObjectType {
     Table,

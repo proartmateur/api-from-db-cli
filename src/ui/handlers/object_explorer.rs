@@ -9,11 +9,10 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
     let total = app.state.catalog.objects.len();
     match code {
         KeyCode::Esc => {
-            app.state.screen = if app.state.connection_source == Some(ConnectionSource::ConfigFile)
-            {
-                Screen::ConnectionSource
-            } else {
-                Screen::EngineSelect
+            app.state.screen = match app.state.connection_source {
+                Some(ConnectionSource::ConfigFile) => Screen::ConnectionSource,
+                Some(ConnectionSource::Manual) => Screen::ManualConnection,
+                None => Screen::EngineSelect,
             };
             app.state.last_message =
                 "Puedes cambiar de origen o motor sin perder control del flujo.".to_string();

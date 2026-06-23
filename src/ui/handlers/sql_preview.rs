@@ -1,5 +1,7 @@
 use crossterm::event::KeyCode;
 
+use crate::adapters::clipboard::ArboardClipboard;
+use crate::core::ports::Clipboard;
 use crate::ui::navigation::{next_sql_preview_action, previous_sql_preview_action};
 use crate::ui::state::{CommandPreviewAction, Screen, SqlPreviewAction};
 use crate::ui::tui::TuiApp;
@@ -29,16 +31,18 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
                         .to_string();
             }
             SqlPreviewAction::CopyAndContinue => {
+                copy_sql_to_clipboard(app);
                 app.state.screen = Screen::CommandPreview;
                 app.state.command_preview_screen.selected_action =
                     CommandPreviewAction::ExecuteCommand;
                 app.state.last_message =
-                    "SQL marcado como copiado. Puedes ejecutarlo aparte y seguir al comando."
+                    "SQL copiado al portapapeles. Puedes ejecutarlo aparte y seguir al comando."
                         .to_string();
             }
             SqlPreviewAction::CopyAndStay => {
+                copy_sql_to_clipboard(app);
                 app.state.last_message =
-                    "SQL marcado como copiado. Puedes ejecutarlo aparte cuando quieras."
+                    "SQL copiado al portapapeles. Puedes ejecutarlo aparte cuando quieras."
                         .to_string();
             }
             SqlPreviewAction::Cancel => {
@@ -47,5 +51,22 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
             }
         },
         _ => {}
+    }
+}
+
+fn copy_sql_to_clipboard(app: &mut TuiApp) {
+    let sql = app
+        .state
+        .preview
+        .as_ref()
+        .and_then(|preview| preview.generated_sql.as_ref())
+        .map(|generated| generated.sql.clone())
+        .unwrap_or_else(|| "No hay SQL generado.".to_string());
+
+    match ArboardClipboard.copy(&sql) {
+        Ok(()) => {}
+        Err(error) => {
+            app.state.last_message = error.to_string();
+        }
     }
 }

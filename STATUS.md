@@ -16,11 +16,11 @@ Situación actual del proyecto:
 
 - Existe una base Rust con separación razonable entre `domain`, `app`, `core`, `adapters` y `ui`.
 - Existe una TUI navegable con flujo principal de exploración y generación.
-- Existe soporte real para SQL Server en conexión, listado de objetos y lectura de esquema de tabla.
+- Existe soporte real para SQL Server y PostgreSQL en conexión, listado de objetos y lectura de esquema de tabla.
 - Existe soporte real para ejecución del comando del generador.
-- PostgreSQL todavía no tiene adapter real; hoy sigue en stub / mock.
 - La creación y carga del archivo de configuración ya existen.
 - La configuración del generador externo ya puede venir desde `config.json` mediante `gen.cmd` y `gen.flags`.
+- Existe un resolver de adapter (`adapters::metadata_adapter_for`) que elimina el hardcodeo de `SqlServerAdapter` en la UI; ahora cualquier motor soportado fluye por la misma tubería.
 
 ## Arquitectura y Base Técnica
 
@@ -54,6 +54,7 @@ Situación actual del proyecto:
 
 - La arquitectura está bien encaminada, pero la UI todavía conoce varios detalles del flujo y de los adapters concretos.
 - No existe aún una capa de casos de uso más formal para cada historia de usuario; parte de la orquestación sigue en `tui.rs`.
+- Ya existe un resolver de adapter por motor (`adapters::metadata_adapter_for`) que centraliza la seleccion de adapter y evita el hardcodeo en la UI, pero todavia faltan casos de uso formales para el resto del flujo.
 
 ## Requerimientos Funcionales
 
@@ -66,14 +67,13 @@ Situación actual del proyecto:
 - Se muestra la ruta generada para que el usuario la edite manualmente.
 - El archivo ya soporta:
   - conexión SQL Server
+  - conexión PostgreSQL
   - `connection_string`
   - `gen.cmd`
   - `gen.flags`
 - La TUI puede reintentar la carga del archivo al presionar `Enter`.
-
-#### Parcial
-
-- Existe opción de `Captura manual` en la TUI, pero hoy sigue siendo mock y no solicita aún todos los datos reales de conexión.
+- La carga por archivo funciona para SQL Server y PostgreSQL usando el resolver de adapter.
+- Opción de `Captura manual` en la TUI con formulario real (host, port, database, username, password) que construye un `ConnectionConfig` válido, prueba la conexión y lista objetos reales para SQL Server y PostgreSQL. La password se oculta en pantalla.
 
 ### 2. Motores soportados
 
@@ -84,12 +84,12 @@ Situación actual del proyecto:
   - listado de objetos
   - lectura de esquema de tabla
   - ejecución SQL
-
-#### Parcial
-
 - PostgreSQL:
-  - existe dirección arquitectónica y soporte mock en la TUI
-  - existe `PostgresAdapter`, pero sigue en stub
+  - prueba de conexión
+  - listado de objetos (schemas, tablas y funciones)
+  - lectura de esquema de tabla
+  - ejecución SQL
+- Ambos motores fluyen por el mismo resolver de adapter, sin lógica de motor embebida en la UI.
 
 ### 3. Exploración de objetos
 
@@ -99,12 +99,15 @@ Situación actual del proyecto:
   - listado real de tablas
   - listado real de stored procedures
   - agrupación por schema a nivel de dato mostrado
+- PostgreSQL:
+  - listado real de tablas
+  - listado real de funciones
+  - agrupación por schema a nivel de dato mostrado
 - En la TUI se pueden seleccionar objetos y navegar al detalle.
 
 #### Parcial
 
-- PostgreSQL sigue usando catálogo mock.
-- La TUI muestra metadata básica para funciones / stored procedures, pero la exploración real de funciones PostgreSQL todavía no está.
+- La TUI muestra metadata básica para funciones / stored procedures, pero la exploración detallada de funciones PostgreSQL todavía no está.
 
 ### 4. Lectura de estructura de tabla
 
@@ -116,11 +119,13 @@ Situación actual del proyecto:
   - nulabilidad
   - posición ordinal
   - detección de primary key
-- La TUI ya consume esa metadata real cuando la tabla viene de SQL Server.
-
-#### Parcial
-
-- PostgreSQL sigue pendiente de implementación real.
+- PostgreSQL:
+  - lectura real de columnas
+  - tipo PostgreSQL original (con tamaño/precisión cuando aplica)
+  - nulabilidad
+  - posición ordinal
+  - detección de primary key
+- La TUI ya consume esa metadata real cuando la tabla viene de cualquiera de los dos motores.
 
 ### 5. Normalización de tipos
 
@@ -286,24 +291,22 @@ Situación actual del proyecto:
 
 ### Épica 1: Gestión de conexión
 
-- `Parcial`
+- `Completado`
 - Hecho:
   - archivo de configuración
   - creación automática de plantilla
   - carga y validación
   - conexión real SQL Server
-- Falta:
-  - captura manual real
-  - PostgreSQL real
+  - conexión real PostgreSQL
+  - captura manual real (formulario TUI con validación)
 
 ### Épica 2: Exploración de objetos
 
-- `Parcial`
+- `Completado`
 - Hecho:
   - SQL Server real
-  - TUI navegable
-- Falta:
   - PostgreSQL real
+  - TUI navegable
 
 ### Épica 3: Selección de objeto
 
@@ -316,12 +319,11 @@ Situación actual del proyecto:
 
 ### Épica 4: Lectura de estructura de tabla
 
-- `Parcial alto`
+- `Completado`
 - Hecho:
   - SQL Server real
-  - type mapping
-- Falta:
   - PostgreSQL real
+  - type mapping
 
 ### Épica 5: Gestión de soft delete
 
@@ -359,8 +361,6 @@ Situación actual del proyecto:
 
 ## Lo Más Importante que Falta
 
-- Implementar PostgreSQL real.
-- Implementar captura manual real de conexión.
 - Ejecutar `ALTER TABLE` real desde la TUI con confirmación completa.
 - Refrescar metadata real después de crear `deleted_at`.
 - Confirmar de forma más fuerte la generación efectiva de código en disco.
@@ -373,13 +373,12 @@ El proyecto ya no está en etapa de solo prototipo. Actualmente tiene:
 
 - una base arquitectónica usable,
 - una TUI funcional,
-- integración real con SQL Server,
+- integración real con SQL Server y PostgreSQL,
+- conexión por archivo y por captura manual real,
 - generación real del comando,
 - ejecución real del generador,
 - y un flujo bastante sólido de preview y navegación.
 
 El mayor hueco funcional hoy está en:
 
-- PostgreSQL,
-- conexión manual real,
-- y cierre total del flujo DDL real para `deleted_at`.
+- cierre total del flujo DDL real para `deleted_at`.

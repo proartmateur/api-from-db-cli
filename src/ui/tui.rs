@@ -20,12 +20,13 @@ use crate::ui::mocks::catalog_fn;
 use crate::ui::screens;
 use crate::ui::state::{
     AppState, CommandPreviewAction, CommandPreviewScreenState, ConnectionSource,
-    ConnectionSourceScreenState, EngineOption, EngineSelectScreenState, ObjectExplorerScreenState,
-    ProcessResultScreenState, Screen, SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction,
-    SqlPreviewScreenState,
+    ConnectionSourceScreenState, EngineOption, EngineSelectScreenState,
+    ManualConnectionScreenState, ObjectExplorerScreenState, ProcessResultScreenState, Screen,
+    SoftDeleteScreenState, SoftDeleteStrategy, SqlPreviewAction, SqlPreviewScreenState,
 };
 use crate::ui::use_cases::{
-    config_file_connection, generator_command, generator_validation, table_preview,
+    config_file_connection, generator_command, generator_validation, manual_connection,
+    table_preview,
 };
 
 pub struct TuiApp {
@@ -43,6 +44,9 @@ impl TuiApp {
                 engine_select_screen: EngineSelectScreenState {
                     selected_engine: EngineOption::PostgreSql,
                 },
+                manual_connection_screen: ManualConnectionScreenState::for_engine(
+                    EngineOption::PostgreSql,
+                ),
                 object_explorer_screen: ObjectExplorerScreenState { selected_object: 0 },
                 soft_delete_screen: SoftDeleteScreenState {
                     selected_strategy: SoftDeleteStrategy::CreateDeletedAt,
@@ -108,6 +112,7 @@ impl TuiApp {
         match self.state.screen {
             Screen::ConnectionSource => handlers::connection_source::handle(self, code),
             Screen::EngineSelect => handlers::engine_select::handle(self, code),
+            Screen::ManualConnection => handlers::manual_connection::handle(self, code),
             Screen::ObjectExplorer => handlers::object_explorer::handle(self, code),
             Screen::ObjectDetails => handlers::object_details::handle(self, code),
             Screen::SoftDeleteStrategy => handlers::soft_delete_strategy::handle(self, code),
@@ -160,6 +165,45 @@ impl TuiApp {
         }
     }
 
+    pub(crate) fn handle_manual_connection_submit(&mut self) {
+        use manual_connection::ManualConnectionOutcome;
+
+        let engine = self.state.engine_select_screen.selected_engine.to_engine();
+        self.state.connection_source = Some(ConnectionSource::Manual);
+
+        match manual_connection::connect(manual_connection::ManualConnectionInput {
+            engine,
+            host: self.state.manual_connection_screen.host.clone(),
+            port: self.state.manual_connection_screen.port.clone(),
+            database: self.state.manual_connection_screen.database.clone(),
+            username: self.state.manual_connection_screen.username.clone(),
+            password: self.state.manual_connection_screen.password.clone(),
+            generator_config: self.generator_config_for_current_flow(),
+        }) {
+            ManualConnectionOutcome::Connected {
+                config,
+                catalog,
+                message,
+            } => {
+                self.state.connection_config = Some(config);
+                self.state.engine = Some(engine);
+                self.state.catalog = catalog;
+                self.state.object_explorer_screen.selected_object = 0;
+                self.state.preview = None;
+                self.state.process_result = None;
+                self.state.selected_db_object = None;
+                self.state.screen = Screen::ObjectExplorer;
+                self.state.last_message = message;
+            }
+            ManualConnectionOutcome::ValidationError { message } => {
+                self.state.last_message = message;
+            }
+            ManualConnectionOutcome::ConnectionError { message } => {
+                self.state.last_message = message;
+            }
+        }
+    }
+
     fn draw(&self, frame: &mut Frame) {
         let areas = Layout::default()
             .direction(Direction::Vertical)
@@ -185,6 +229,7 @@ impl TuiApp {
         match self.state.screen {
             Screen::ConnectionSource => screens::connection_source::render(self, frame, areas[1]),
             Screen::EngineSelect => screens::engine_select::render(self, frame, areas[1]),
+            Screen::ManualConnection => screens::manual_connection::render(self, frame, areas[1]),
             Screen::ObjectExplorer => screens::object_explorer::render(self, frame, areas[1]),
             Screen::ObjectDetails => screens::object_details::render(self, frame, areas[1]),
             Screen::SoftDeleteStrategy => {
@@ -386,7 +431,7 @@ pub(crate) fn draw_menu(
     frame.render_widget(helper_widget, chunks[1]);
 }
 
-fn is_critical_helper_message(message: &str) -> bool {
+pub(crate) fn is_critical_helper_message(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("no se encontro")
         || lower.contains("no fue posible")

@@ -1,8 +1,6 @@
 use crate::adapters::config::ConfigLoader;
-use crate::adapters::sqlserver::SqlServerAdapter;
-use crate::core::ports::{ConnectionProvider, MetadataExplorer};
+use crate::adapters::metadata_adapter_for;
 use crate::domain::{ConnectionConfig, DatabaseEngine};
-use crate::ui::mocks::catalog_fn;
 use crate::ui::state::{Catalog, CatalogMode};
 
 pub(crate) enum ConfigFileConnectionOutcome {
@@ -62,48 +60,36 @@ pub(crate) fn load_or_create() -> ConfigFileConnectionOutcome {
 }
 
 fn activate_connection(config: ConnectionConfig, path: String) -> ConfigFileConnectionOutcome {
-    match config.engine {
-        DatabaseEngine::SqlServer => {
-            let adapter = SqlServerAdapter;
-            match adapter.test_connection(&config) {
-                Ok(()) => match adapter.list_objects(&config) {
-                    Ok(objects) => ConfigFileConnectionOutcome::Loaded {
-                        path: path.clone(),
-                        engine: config.engine,
-                        config,
-                        catalog: Catalog {
-                            objects,
-                            tables: Vec::new(),
-                            mode: CatalogMode::Real,
-                        },
-                        message: format!(
-                            "Configuracion cargada desde `{}`. Conexion real a SQL Server establecida.",
-                            path
-                        ),
-                    },
-                    Err(error) => ConfigFileConnectionOutcome::Error {
-                        path: Some(path),
-                        message: format!(
-                            "La conexion a SQL Server funciono, pero no se pudieron listar objetos: {}",
-                            error
-                        ),
-                    },
+    let engine = config.engine;
+    let adapter = metadata_adapter_for(engine);
+
+    match adapter.test_connection(&config) {
+        Ok(()) => match adapter.list_objects(&config) {
+            Ok(objects) => ConfigFileConnectionOutcome::Loaded {
+                path: path.clone(),
+                engine,
+                config,
+                catalog: Catalog {
+                    objects,
+                    tables: Vec::new(),
+                    mode: CatalogMode::Real,
                 },
-                Err(error) => ConfigFileConnectionOutcome::Error {
-                    path: Some(path.clone()),
-                    message: format!("No se pudo conectar a SQL Server con `{}`: {}", path, error),
-                },
-            }
-        }
-        DatabaseEngine::PostgreSql => ConfigFileConnectionOutcome::Loaded {
-            path: path.clone(),
-            engine: config.engine,
-            config,
-            catalog: catalog_fn(DatabaseEngine::PostgreSql),
-            message: format!(
-                "Configuracion cargada desde `{}`. PostgreSQL aun usa catalogo mock mientras conectamos su adapter real.",
-                path
-            ),
+                message: format!(
+                    "Configuracion cargada desde `{}`. Conexion real a {} establecida.",
+                    path, engine
+                ),
+            },
+            Err(error) => ConfigFileConnectionOutcome::Error {
+                path: Some(path),
+                message: format!(
+                    "La conexion a {} funciono, pero no se pudieron listar objetos: {}",
+                    engine, error
+                ),
+            },
+        },
+        Err(error) => ConfigFileConnectionOutcome::Error {
+            path: Some(path.clone()),
+            message: format!("No se pudo conectar a {} con `{}`: {}", engine, path, error),
         },
     }
 }

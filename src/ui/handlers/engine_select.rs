@@ -1,6 +1,5 @@
 use crossterm::event::KeyCode;
 
-use crate::ui::mocks::catalog_fn;
 use crate::ui::navigation::{next_engine_option, previous_engine_option};
 use crate::ui::state::Screen;
 use crate::ui::tui::TuiApp;
@@ -21,17 +20,13 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
                 next_engine_option(app.state.engine_select_screen.selected_engine);
         }
         KeyCode::Enter => {
-            let engine = app.state.engine_select_screen.selected_engine.to_engine();
-            app.state.engine = Some(engine);
-            app.state.catalog = catalog_fn(engine);
-            app.state.connection_config = None;
-            app.state.object_explorer_screen.selected_object = 0;
-            app.state.preview = None;
-            app.state.process_result = None;
-            app.state.screen = Screen::ObjectExplorer;
+            let engine = app.state.engine_select_screen.selected_engine;
+            app.state.engine = Some(engine.to_engine());
+            app.state.manual_connection_screen.reset_for_engine(engine);
+            app.state.screen = Screen::ManualConnection;
             app.state.last_message = format!(
-                "Conexion exitosa simulada a {}. Explora los objetos disponibles.",
-                engine
+                "Completa los datos para conectar a {} manualmente.",
+                engine.label()
             );
         }
         _ => {}

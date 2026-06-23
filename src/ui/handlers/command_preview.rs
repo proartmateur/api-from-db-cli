@@ -1,5 +1,7 @@
 use crossterm::event::KeyCode;
 
+use crate::adapters::clipboard::ArboardClipboard;
+use crate::core::ports::Clipboard;
 use crate::domain::ProcessResult;
 use crate::ui::mocks::process;
 use crate::ui::navigation::{next_command_preview_action, previous_command_preview_action};
@@ -54,16 +56,18 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
                 }
             },
             CommandPreviewAction::CopyAndMarkExternalExecution => {
+                copy_command_to_clipboard(app);
                 app.state.process_result =
                     Some(process::external_process_result(app.state.preview.as_ref()));
                 app.state.process_result_screen.scroll = 0;
                 app.state.screen = Screen::ProcessResult;
                 app.state.last_message =
-                    "Comando marcado como copiado para ejecucion externa.".to_string();
+                    "Comando copiado al portapapeles para ejecucion externa.".to_string();
             }
             CommandPreviewAction::CopyAndStay => {
+                copy_command_to_clipboard(app);
                 app.state.last_message =
-                    "Comando marcado como copiado al portapapeles virtual.".to_string();
+                    "Comando copiado al portapapeles.".to_string();
             }
             CommandPreviewAction::Cancel => {
                 app.state.screen = Screen::ObjectExplorer;
@@ -72,5 +76,21 @@ pub(crate) fn handle(app: &mut TuiApp, code: KeyCode) {
             }
         },
         _ => {}
+    }
+}
+
+fn copy_command_to_clipboard(app: &mut TuiApp) {
+    let command = app
+        .state
+        .preview
+        .as_ref()
+        .map(|preview| preview.generated_command.raw_command.clone())
+        .unwrap_or_else(|| "No hay comando generado.".to_string());
+
+    match ArboardClipboard.copy(&command) {
+        Ok(()) => {}
+        Err(error) => {
+            app.state.last_message = error.to_string();
+        }
     }
 }
