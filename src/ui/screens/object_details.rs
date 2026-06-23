@@ -1,7 +1,8 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    text::{Line, Text},
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 
@@ -24,17 +25,32 @@ pub(crate) fn render(app: &TuiApp, frame: &mut Frame, area: Rect) {
             selected.name
         ))];
         lines.push(Line::from(""));
-        lines.push(Line::from("Columnas detectadas:"));
 
         if let Some(preview) = preview {
+            let count = preview.analyzed_schema.columns.len();
+            lines.push(Line::from(Span::styled(
+                format!("Columnas detectadas ({count}):"),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
             for column in &preview.analyzed_schema.columns {
                 let marker = if column.is_primary_key { "PK" } else { "  " };
-                lines.push(Line::from(format!(
-                    "{marker} {}:{} ({})",
-                    column.name, column.normalized_type, column.db_type
-                )));
+                lines.push(Line::from(vec![
+                    Span::raw(format!("{marker} ")),
+                    Span::styled(column.name.clone(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::raw(":"),
+                    Span::styled(column.normalized_type.to_string(), Style::default().fg(Color::Cyan)),
+                    Span::styled(format!(" ({})", column.db_type), Style::default().fg(Color::DarkGray)),
+                ]));
             }
         } else {
+            lines.push(Line::from(Span::styled(
+                "Columnas detectadas:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
             lines.push(Line::from(
                 "No fue posible cargar la estructura de la tabla.",
             ));
