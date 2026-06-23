@@ -99,7 +99,9 @@ impl TuiApp {
                     continue;
                 }
 
-                if matches!(key.code, KeyCode::Char('q')) {
+                if matches!(key.code, KeyCode::Char('q'))
+                    && !self.state.manual_connection_screen.editing
+                {
                     return Ok(());
                 }
 
