@@ -274,6 +274,8 @@ impl ManualConnectionScreenState {
 #[derive(Debug, Clone)]
 pub(crate) struct ObjectExplorerScreenState {
     pub(crate) selected_object: usize,
+    pub(crate) searching: bool,
+    pub(crate) filter: String,
 }
 
 #[derive(Debug, Clone)]

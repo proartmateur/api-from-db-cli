@@ -47,7 +47,7 @@ impl TuiApp {
                 manual_connection_screen: ManualConnectionScreenState::for_engine(
                     EngineOption::PostgreSql,
                 ),
-                object_explorer_screen: ObjectExplorerScreenState { selected_object: 0 },
+                object_explorer_screen: ObjectExplorerScreenState { selected_object: 0, searching: false, filter: String::new() },
                 soft_delete_screen: SoftDeleteScreenState {
                     selected_strategy: SoftDeleteStrategy::CreateDeletedAt,
                     selected_manual_field: 0,
@@ -101,6 +101,7 @@ impl TuiApp {
 
                 if matches!(key.code, KeyCode::Char('q'))
                     && !self.state.manual_connection_screen.editing
+                    && !self.state.object_explorer_screen.searching
                 {
                     return Ok(());
                 }
